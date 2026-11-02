@@ -81,7 +81,7 @@ class BackgroundRemovalService:
             self._load_transformers(name)
         else:
             from rembg import new_session
-            logger.info("Loading rembg model '%s' (cached in $U2NET_HOME, default ~/.u2net)...", name)
+            logger.info("Loading rembg model '%s' (cached in $U2NET_HOME or $REMBG_HOME, default ~/.rembg)...", name)
             # CPU provider keeps results reproducible across machines; ONNX Runtime's
             # CoreML provider (picked automatically on macOS) can stall while compiling.
             self._session = new_session(name, providers=["CPUExecutionProvider"])

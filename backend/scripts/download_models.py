@@ -5,8 +5,8 @@
     python backend/scripts/download_models.py --only rembg
     python backend/scripts/download_models.py --only realesrgan
 
-1. rembg segmentation model (BG_REMOVAL_MODEL, default ``u2net``),
-   cached by rembg under ~/.u2net (override with U2NET_HOME). rembg checks an
+1. rembg segmentation model (BG_REMOVAL_MODEL, default ``u2net``), cached by
+   rembg under $U2NET_HOME or $REMBG_HOME (default ~/.rembg/models/<name>/). rembg checks an
    MD5 on download; this script additionally pins the default model's SHA-256.
 2. Real-ESRGAN x4plus: downloads the official ``RealESRGAN_x4plus.pth``
    (~64 MB, BSD-3-Clause, github.com/xinntao/Real-ESRGAN) and exports it to
@@ -197,21 +197,22 @@ def download_rembg():
     if name in ("birefnet", "rmbg-2.0"):
         print(f"BG_REMOVAL_MODEL={name} is a transformers model; it downloads from Hugging Face on first use.")
         return
-    from rembg import new_session
+    from rembg.sessions import sessions
 
-    cache = os.path.expanduser(os.environ.get("U2NET_HOME", "~/.u2net"))
-    print(f"Fetching rembg model '{name}' (cache: {cache})...")
-    new_session(name, providers=["CPUExecutionProvider"])
+    if name not in sessions:
+        sys.exit(f"Unknown rembg model: {name}")
+    print(f"Fetching rembg model '{name}' (U2NET_HOME or REMBG_HOME, default ~/.rembg)...")
+    # Downloads (with rembg's MD5 check) or finds an existing copy, without loading it.
+    path = sessions[name].download_models()
     expected = REMBG_SHA256.get(name)
-    path = os.path.join(cache, f"{name}.onnx")
-    if expected and os.path.exists(path):
+    if expected:
         digest = sha256_of(path)
         if digest != expected:
             os.remove(path)
             sys.exit(f"Checksum mismatch for {path}: {digest} (file removed)")
-        print("  ok (sha256 verified)")
+        print(f"  ok: {path} (sha256 verified)")
     else:
-        print("  ok (rembg md5 check only)")
+        print(f"  ok: {path} (rembg md5 check only)")
 
 
 def download_realesrgan():

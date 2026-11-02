@@ -1,56 +1,80 @@
 """Image-processing endpoints.
 
 Every endpoint takes multipart form data with either a ``file`` upload or a
-storage ``key`` and returns the processed image as PNG bytes.
+storage ``key`` and returns the processed image as PNG bytes. CPU work runs in
+a worker thread under the job limiter (``services/jobs.py``), so a long upscale
+never blocks the event loop.
 """
 from __future__ import annotations
 
-from typing import Optional
+import logging
+from typing import Callable, Literal, Optional, Union
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
-from image_edit_providers.base import CLEANUP_PRESETS
+from image_edit_providers import PROVIDERS, create_image_edit_provider
+from image_edit_providers.base import CLEANUP_PRESETS, ImageEditError
+from routers.uploads import read_upload
 from services.background_removal import bg_removal_service
-from services.storage import storage
+from services.errors import ImageTooLargeError, ModelUnavailableError
+from services.jobs import ServerBusyError, get_job_limiter
+from services.storage import InvalidKeyError, storage
 from services.studio_compositor import composite_studio, composite_with_template
-from services.upscale_service import SUPPORTED_SCALES, upscale_service
-from config import MAX_UPLOAD_BYTES
-from utils.image_helpers import bytes_to_pil, pil_to_bytes
+from services.upscale_service import SUPPORTED_SCALES, check_upscale_size, upscale_service
+from services.watermark import POSITIONS, parse_hex_color, stamp_text
+from utils.image_helpers import ImageValidationError, decode_image, pil_to_bytes
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/process", tags=["processing"])
 
-
-
-def _png(img: Image.Image) -> Response:
-    return Response(content=pil_to_bytes(img, fmt="PNG"), media_type="image/png")
+MAX_PROMPT_CHARS = 2000
+MAX_WATERMARK_CHARS = 200
 
 
 async def _read_input(file: Optional[UploadFile], key: Optional[str]) -> bytes:
+    """Bytes of the uploaded ``file``, or of the stored image at ``key``."""
     if file is not None:
-        data = await file.read()
-    elif key:
-        try:
-            data = storage.download_image(key)
-        except Exception as e:
-            raise HTTPException(status_code=404, detail=f"Image not found: {e}")
-    else:
-        raise HTTPException(status_code=400, detail="Provide a 'file' upload or a storage 'key'")
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=400, detail="Image too large. Max 25 MB.")
-    return data
+        return await read_upload(file)
+    if not key:
+        raise HTTPException(400, "Provide a 'file' upload or a storage 'key'")
+    try:
+        return storage.download_image(key)
+    except InvalidKeyError as e:
+        raise HTTPException(400, str(e))
+    except Exception:
+        raise HTTPException(404, "Image not found")
+
+
+async def _run_job(fn: Callable[[], Union[Image.Image, bytes]]) -> Response:
+    """Run ``fn`` under the job limiter and return its image as PNG, mapping failures to status codes."""
+    try:
+        result = await get_job_limiter().run(fn)
+    except ServerBusyError as e:
+        raise HTTPException(
+            503, "Another image job is running; retry shortly", headers={"Retry-After": str(e.retry_after_s)}
+        )
+    except ImageValidationError as e:
+        raise HTTPException(400, str(e))
+    except ImageTooLargeError as e:
+        raise HTTPException(413, str(e))
+    except ModelUnavailableError as e:
+        logger.error("Model unavailable: %s", e)
+        raise HTTPException(503, str(e))
+    except Exception:
+        logger.exception("Image job failed")
+        raise HTTPException(500, "Processing failed; see the server log")
+    content = result if isinstance(result, bytes) else pil_to_bytes(result, fmt="PNG")
+    return Response(content=content, media_type="image/png")
 
 
 @router.post("/remove-background")
 async def remove_background(file: Optional[UploadFile] = File(None), key: Optional[str] = Form(None)):
     """Cut out the vehicle. Returns an RGBA PNG."""
     data = await _read_input(file, key)
-    try:
-        result = bg_removal_service.remove_background(data)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    return Response(content=result, media_type="image/png")
+    return await _run_job(lambda: bg_removal_service.remove_background(data))
 
 
 @router.post("/upscale")
@@ -63,48 +87,48 @@ async def upscale(
     if scale not in SUPPORTED_SCALES:
         raise HTTPException(400, f"scale must be one of {SUPPORTED_SCALES}")
     data = await _read_input(file, key)
-    try:
-        result = upscale_service.upscale(bytes_to_pil(data), scale=scale)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    return _png(result)
+
+    def job() -> Image.Image:
+        image = decode_image(data)
+        check_upscale_size(image.width, image.height, scale)
+        return upscale_service.upscale(image, scale=scale)
+
+    return await _run_job(job)
 
 
 @router.post("/enhance")
 async def enhance(file: Optional[UploadFile] = File(None), key: Optional[str] = Form(None)):
     """Detail enhancement at the original size (4x Real-ESRGAN, then Lanczos back down)."""
     data = await _read_input(file, key)
-    try:
-        image = bytes_to_pil(data)
-        w, h = image.size
-        result = upscale_service.upscale(image, scale=4).resize((w, h), Image.LANCZOS)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    return _png(result)
+
+    def job() -> Image.Image:
+        image = decode_image(data)
+        check_upscale_size(image.width, image.height, 4)
+        return upscale_service.upscale(image, scale=4).resize(image.size, Image.LANCZOS)
+
+    return await _run_job(job)
 
 
 @router.post("/composite-template")
-async def composite_template(
-    key: str = Form(...),
-    template_file: Optional[UploadFile] = File(None),
-):
+async def composite_template(key: str = Form(...), template_file: Optional[UploadFile] = File(None)):
     """Cut out the vehicle and composite it over the white studio or an uploaded backdrop."""
     data = await _read_input(None, key)
-    try:
-        subject = bytes_to_pil(bg_removal_service.remove_background(data))
-        if template_file is not None:
-            bg_image = bytes_to_pil(await template_file.read())
-            return _png(composite_with_template(subject, bg_image))
-        return _png(composite_studio(subject))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    background = await read_upload(template_file) if template_file is not None else None
+
+    def job() -> Image.Image:
+        subject = decode_image(bg_removal_service.remove_background(data))
+        if background is None:
+            return composite_studio(subject)
+        return composite_with_template(subject, decode_image(background))
+
+    return await _run_job(job)
 
 
 @router.post("/mirror")
 async def mirror(file: Optional[UploadFile] = File(None), key: Optional[str] = Form(None)):
     """Flip horizontally."""
     data = await _read_input(file, key)
-    return _png(bytes_to_pil(data).transpose(Image.FLIP_LEFT_RIGHT))
+    return await _run_job(lambda: decode_image(data).transpose(Image.FLIP_LEFT_RIGHT))
 
 
 @router.post("/crop")
@@ -117,81 +141,39 @@ async def crop(
     crop_h: int = Form(...),
 ):
     data = await _read_input(file, key)
-    image = bytes_to_pil(data)
-    w, h = image.size
-    x1, y1 = max(0, crop_x), max(0, crop_y)
-    x2, y2 = min(w, crop_x + crop_w), min(h, crop_y + crop_h)
-    if x2 <= x1 or y2 <= y1:
-        raise HTTPException(status_code=400, detail="Invalid crop region")
-    return _png(image.crop((x1, y1, x2, y2)))
+
+    def job() -> Image.Image:
+        image = decode_image(data)
+        w, h = image.size
+        x1, y1 = max(0, crop_x), max(0, crop_y)
+        x2, y2 = min(w, crop_x + crop_w), min(h, crop_y + crop_h)
+        if x2 <= x1 or y2 <= y1:
+            raise ImageValidationError("Invalid crop region")
+        return image.crop((x1, y1, x2, y2))
+
+    return await _run_job(job)
 
 
 @router.post("/watermark")
 async def watermark(
     file: Optional[UploadFile] = File(None),
     key: Optional[str] = Form(None),
-    text: str = Form(...),
-    position: str = Form("bottom-right"),
-    opacity: float = Form(0.5),
-    font_size: int = Form(36),
+    text: str = Form(..., min_length=1, max_length=MAX_WATERMARK_CHARS),
+    position: Literal[POSITIONS] = Form("bottom-right"),  # type: ignore[valid-type]
+    opacity: float = Form(0.5, ge=0.0, le=1.0),
+    font_size: int = Form(36, ge=8, le=400),
     color: str = Form("#FFFFFF"),
     repeat: bool = Form(False),
 ):
     """Stamp your own text watermark onto a cleaned image."""
-    data = await _read_input(file, key)
-    image = bytes_to_pil(data).convert("RGBA")
-    w, h = image.size
-    hex_color = color.lstrip("#")
     try:
-        r, g, b = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
+        rgb = parse_hex_color(color)
     except ValueError:
         raise HTTPException(400, "color must be #RRGGBB")
-    alpha = int(max(0.0, min(1.0, opacity)) * 255)
-    scaled_size = max(12, int(font_size * (w / 1200)))
-
-    font = None
-    for font_path in (
-        "/System/Library/Fonts/Helvetica.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "C:\\Windows\\Fonts\\arial.ttf",
-    ):
-        try:
-            font = ImageFont.truetype(font_path, scaled_size)
-            break
-        except (OSError, IOError):
-            continue
-    if font is None:
-        font = ImageFont.load_default()
-
-    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-
-    if repeat:
-        step_x, step_y = tw + scaled_size * 3, th + scaled_size * 4
-        for yi in range(0, h, step_y):
-            for xi in range(0, w, step_x):
-                tile = Image.new("RGBA", (tw + 20, th + 20), (0, 0, 0, 0))
-                ImageDraw.Draw(tile).text((10, 10), text, fill=(r, g, b, alpha), font=font)
-                rotated = tile.rotate(30, expand=True, resample=Image.BICUBIC)
-                overlay.paste(rotated, (xi, yi), rotated)
-    else:
-        margin = int(w * 0.03)
-        positions = {
-            "top-left": (margin, margin),
-            "top-right": (w - tw - margin, margin),
-            "top-center": ((w - tw) // 2, margin),
-            "center": ((w - tw) // 2, (h - th) // 2),
-            "bottom-left": (margin, h - th - margin),
-            "bottom-right": (w - tw - margin, h - th - margin),
-            "bottom-center": ((w - tw) // 2, h - th - margin),
-        }
-        x, y = positions.get(position, positions["bottom-right"])
-        draw.text((x + 2, y + 2), text, fill=(0, 0, 0, max(40, alpha // 2)), font=font)
-        draw.text((x, y), text, fill=(r, g, b, alpha), font=font)
-
-    return _png(Image.alpha_composite(image, overlay))
+    data = await _read_input(file, key)
+    return await _run_job(
+        lambda: stamp_text(decode_image(data), text, position, opacity, font_size, rgb, repeat)
+    )
 
 
 @router.get("/health")
@@ -217,31 +199,29 @@ async def llm_edit_presets():
 async def llm_edit_image(
     file: Optional[UploadFile] = File(None),
     key: Optional[str] = Form(None),
-    prompt: Optional[str] = Form(None),
+    prompt: Optional[str] = Form(None, max_length=MAX_PROMPT_CHARS),
     preset: Optional[str] = Form(None),
-    provider: Optional[str] = Form(None),
-    quality: str = Form("medium"),
+    provider: Optional[Literal[PROVIDERS]] = Form(None),  # type: ignore[valid-type]
+    quality: Literal["low", "medium", "high"] = Form("medium"),
 ):
     """Edit an image with Gemini or OpenAI using a preset (``remove_plate``,
-    ``remove_watermark``, ...) or a free-form ``prompt``."""
-    from image_edit_providers import create_image_edit_provider
-    from image_edit_providers.base import ImageEditError
-
+    ``remove_watermark``, ...) or a free-form ``prompt``. Each call is billed by the provider."""
     if preset:
         if preset not in CLEANUP_PRESETS:
             raise HTTPException(400, f"Unknown preset. Choose from: {', '.join(CLEANUP_PRESETS)}")
         prompt = CLEANUP_PRESETS[preset]["prompt"]
-    if not prompt:
+    if not prompt or not prompt.strip():
         raise HTTPException(400, "Provide 'prompt' or 'preset'")
 
     editor = create_image_edit_provider(provider)
     if not editor:
-        raise HTTPException(
-            503,
-            "No image edit provider configured. Set OPENAI_API_KEY or GEMINI_API_KEY in .env",
-        )
+        raise HTTPException(503, "No image edit provider configured. Set OPENAI_API_KEY or GEMINI_API_KEY in .env")
 
     image_bytes = await _read_input(file, key)
+    try:
+        decode_image(image_bytes)  # reject junk before paying for a provider call
+    except ImageValidationError as e:
+        raise HTTPException(400, str(e))
     try:
         result = await editor.edit_image(image_bytes=image_bytes, prompt=prompt, quality=quality)
     except ImageEditError as e:
@@ -261,15 +241,9 @@ async def llm_edit_image(
 @router.get("/llm-edit/providers")
 async def list_edit_providers():
     """Which image-edit providers have an API key configured."""
-    from image_edit_providers import create_image_edit_provider
-
     providers = []
-    for name in ("openai", "gemini"):
+    for name in PROVIDERS:
         editor = create_image_edit_provider(name)
         if editor:
-            providers.append({
-                "name": name,
-                "available": await editor.check_available(),
-                "models": [editor.model],
-            })
+            providers.append({"name": name, "available": await editor.check_available(), "models": [editor.model]})
     return {"providers": providers}

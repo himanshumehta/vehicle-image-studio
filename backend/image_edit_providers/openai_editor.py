@@ -7,7 +7,7 @@ from io import BytesIO
 from typing import Optional
 from PIL import Image
 
-from .base import ImageEditProvider, ImageEditResult, ImageEditError, VEHICLE_PHOTO_CONTEXT
+from .base import REQUEST_TIMEOUT_S, VEHICLE_PHOTO_CONTEXT, ImageEditProvider, ImageEditResult, provider_failure
 
 QUALITY_MAP = {"low": "low", "medium": "medium", "high": "high"}
 COST_ESTIMATES = {"low": 0.009, "medium": 0.034, "high": 0.133}
@@ -26,7 +26,7 @@ class OpenAIImageEditor(ImageEditProvider):
     def _get_client(self):
         if self._client is None:
             from openai import OpenAI
-            self._client = OpenAI(api_key=self._api_key)
+            self._client = OpenAI(api_key=self._api_key, timeout=REQUEST_TIMEOUT_S, max_retries=1)
         return self._client
 
     async def edit_image(
@@ -62,13 +62,7 @@ class OpenAIImageEditor(ImageEditProvider):
                 size=size,
             )
         except Exception as e:
-            error_msg = str(e)
-            retryable = "rate_limit" in error_msg.lower() or "timeout" in error_msg.lower()
-            raise ImageEditError(
-                f"OpenAI image edit failed: {error_msg}",
-                provider="openai",
-                retryable=retryable,
-            )
+            raise provider_failure("openai", e, ("rate_limit", "rate limit", "timeout", "timed out")) from e
 
         edited_bytes = base64.b64decode(result.data[0].b64_json)
         edited_img = Image.open(BytesIO(edited_bytes))

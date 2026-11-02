@@ -6,7 +6,8 @@
     python backend/scripts/download_models.py --only realesrgan
 
 1. rembg segmentation model (BG_REMOVAL_MODEL, default ``u2net``),
-   cached by rembg under ~/.u2net (override with U2NET_HOME).
+   cached by rembg under ~/.u2net (override with U2NET_HOME). rembg checks an
+   MD5 on download; this script additionally pins the default model's SHA-256.
 2. Real-ESRGAN x4plus: downloads the official ``RealESRGAN_x4plus.pth``
    (~64 MB, BSD-3-Clause, github.com/xinntao/Real-ESRGAN) and exports it to
    ONNX at ``$MODELS_DIR/realesrgan_x4plus.onnx`` (default backend/models/).
@@ -104,6 +105,10 @@ PTH_URL = (
     "v0.1.0/RealESRGAN_x4plus.pth"
 )
 PTH_SHA256 = "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1"
+# SHA-256 of rembg model files we know. Others fall back to rembg's own MD5 check.
+REMBG_SHA256 = {
+    "u2net": "8d10d2f3bb75ae3b6d527c77944fc5e7dcd94b29809d47a739a7a728a912b491",
+}
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BACKEND_DIR = os.path.dirname(SCRIPT_DIR)
@@ -113,6 +118,16 @@ from config import get_settings  # noqa: E402
 MODEL_DIR = get_settings().models_dir
 PTH_PATH = os.path.join(MODEL_DIR, "RealESRGAN_x4plus.pth")
 ONNX_PATH = os.path.join(MODEL_DIR, "realesrgan_x4plus.onnx")
+
+
+def sha256_of(path: str) -> str:
+    import hashlib
+
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
 
 
 def download_pth():
@@ -134,15 +149,10 @@ def download_pth():
             total += len(chunk)
             mb = total / (1024 * 1024)
             print(f"\r  {mb:.1f} MB downloaded", end="", flush=True)
-    import hashlib
-
-    h = hashlib.sha256()
-    with open(tmp, "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    if h.hexdigest() != PTH_SHA256:
+    digest = sha256_of(tmp)
+    if digest != PTH_SHA256:
         os.remove(tmp)
-        sys.exit(f"Checksum mismatch for RealESRGAN_x4plus.pth: {h.hexdigest()}")
+        sys.exit(f"Checksum mismatch for RealESRGAN_x4plus.pth: {digest}")
     os.rename(tmp, PTH_PATH)
     print(f"\n  Saved to {PTH_PATH} (sha256 verified)")
 
@@ -153,7 +163,8 @@ def convert():
         num_in_ch=3, num_out_ch=3, scale=4,
         num_feat=64, num_block=23, num_grow_ch=32,
     )
-    state = torch.load(PTH_PATH, map_location="cpu", weights_only=True)
+    # weights_only=True refuses pickled code, and the file's SHA-256 was checked on download.
+    state = torch.load(PTH_PATH, map_location="cpu", weights_only=True)  # nosemgrep: trailofbits.python.pickles-in-pytorch.pickles-in-pytorch
     model.load_state_dict(state["params_ema"])
     model.eval()
 
@@ -188,10 +199,19 @@ def download_rembg():
         return
     from rembg import new_session
 
-    cache = os.environ.get("U2NET_HOME", os.path.expanduser("~/.u2net"))
+    cache = os.path.expanduser(os.environ.get("U2NET_HOME", "~/.u2net"))
     print(f"Fetching rembg model '{name}' (cache: {cache})...")
     new_session(name, providers=["CPUExecutionProvider"])
-    print("  ok")
+    expected = REMBG_SHA256.get(name)
+    path = os.path.join(cache, f"{name}.onnx")
+    if expected and os.path.exists(path):
+        digest = sha256_of(path)
+        if digest != expected:
+            os.remove(path)
+            sys.exit(f"Checksum mismatch for {path}: {digest} (file removed)")
+        print("  ok (sha256 verified)")
+    else:
+        print("  ok (rembg md5 check only)")
 
 
 def download_realesrgan():

@@ -18,6 +18,8 @@ REPO_ROOT = os.path.dirname(BACKEND_DIR)
 
 # Largest accepted image upload (bytes), for every endpoint that takes one.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+# Whole request body cap: two image uploads (photo + custom background) plus form fields.
+MAX_REQUEST_BYTES = 2 * MAX_UPLOAD_BYTES + 1024 * 1024
 
 
 class Settings(BaseSettings):
@@ -49,8 +51,17 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_image_model: str = "gemini-2.5-flash-image"
 
+    # --- Limits (protect a CPU-only box from oversized or parallel jobs) ------
+    max_image_pixels: int = 40_000_000  # decoded size of any input image
+    # Pixels produced by the Real-ESRGAN network for one request (8x runs it on a 4x result).
+    max_upscale_output_pixels: int = 25_000_000
+    max_concurrent_jobs: int = 1  # model/image jobs running at once; ONNX already uses every core
+    job_queue_timeout_s: float = 30.0  # wait for a free slot before answering 503
+
     # --- HTTP --------------------------------------------------------------
     cors_origins: str = "http://localhost:3000"
+    # Host headers the API answers to (DNS-rebinding guard). "*" disables the check.
+    allowed_hosts: str = "localhost,127.0.0.1"
 
     model_config = {
         "env_file": (os.path.join(REPO_ROOT, ".env"), os.path.join(BACKEND_DIR, ".env")),
@@ -70,7 +81,15 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> List[str]:
-        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+        return _split(self.cors_origins)
+
+    @property
+    def allowed_host_list(self) -> List[str]:
+        return _split(self.allowed_hosts)
+
+
+def _split(value: str) -> List[str]:
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 @lru_cache

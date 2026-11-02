@@ -13,6 +13,7 @@ os.environ["LOCAL_STORAGE_DIR"] = _TMP_STORAGE
 os.environ["SEED_SAMPLES"] = "false"
 os.environ["OPENAI_API_KEY"] = ""
 os.environ["GEMINI_API_KEY"] = ""
+os.environ["ALLOWED_HOSTS"] = "test,localhost,127.0.0.1"
 
 
 def make_png(width=100, height=100, mode="RGB", color=(255, 0, 0)) -> bytes:

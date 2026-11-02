@@ -25,7 +25,8 @@ def font(size: int) -> ImageFont.ImageFont:
 
 
 def scene_background(w: int, h: int, seed: int, horizon: float = 0.62) -> Image.Image:
-    rnd = random.Random(seed)
+    # Seeded noise for synthetic drawings, not cryptography.
+    rnd = random.Random(seed)  # nosec B311
     img = Image.new("RGB", (w, h))
     d = ImageDraw.Draw(img)
     hy = int(h * horizon)

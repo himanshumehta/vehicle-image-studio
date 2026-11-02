@@ -10,6 +10,9 @@ Two interchangeable backends expose the same small interface used by the routers
 
 Keys are POSIX-style relative paths such as ``vehicles/samples/hatchback.jpg``.
 The first folder below ``vehicles/`` is treated as a collection in the gallery.
+Every key that reaches a backend goes through :func:`validate_key`: relative,
+no ``.``/``..`` segments, and an image extension, so the API can never read,
+write or serve anything but image files inside the store.
 """
 from __future__ import annotations
 
@@ -26,6 +29,7 @@ from config import REPO_ROOT, get_settings
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp")
 COLLECTION_ROOT = "vehicles/"
+MAX_KEY_LENGTH = 512
 
 
 def derive_nobg_key(key: str) -> str:
@@ -48,6 +52,22 @@ class StorageError(Exception):
     pass
 
 
+class InvalidKeyError(StorageError):
+    """The key is malformed. The message is safe to show to clients."""
+
+
+def validate_key(key: str) -> str:
+    if not isinstance(key, str) or not key or len(key) > MAX_KEY_LENGTH:
+        raise InvalidKeyError("Invalid storage key")
+    if key.startswith("/") or "\\" in key or "\x00" in key:
+        raise InvalidKeyError("Invalid storage key")
+    if any(part in ("", ".", "..") for part in key.split("/")):
+        raise InvalidKeyError("Invalid storage key")
+    if not key.lower().endswith(IMAGE_EXTS):
+        raise InvalidKeyError("Storage keys must end in .jpg, .jpeg, .png or .webp")
+    return key
+
+
 class LocalStorage:
     """Stores images as plain files below a root directory."""
 
@@ -57,10 +77,10 @@ class LocalStorage:
 
     # -- helpers ------------------------------------------------------------
     def _path(self, key: str) -> Path:
-        key = key.lstrip("/")
-        path = (self.root / key).resolve()
-        if path != self.root and self.root not in path.parents:
-            raise StorageError(f"Key escapes storage root: {key}")
+        path = (self.root / validate_key(key)).resolve()
+        # Defence in depth (symlinks): the resolved file must still be inside the root.
+        if self.root not in path.parents:
+            raise InvalidKeyError("Invalid storage key")
         return path
 
     def _record(self, path: Path) -> dict:
@@ -83,11 +103,16 @@ class LocalStorage:
             key = p.relative_to(self.root).as_posix()
             if prefix and not key.startswith(prefix):
                 continue
+            try:
+                validate_key(key)
+            except InvalidKeyError:
+                continue  # e.g. a hand-copied file with a backslash in its name
             out.append(p)
         return sorted(out, key=lambda p: p.relative_to(self.root).as_posix())
 
     # -- interface ----------------------------------------------------------
-    def list_images(self, prefix: str = "", max_keys: int = 50, continuation_token: str = "") -> dict:
+    # "token" here is a pagination cursor, not a credential.
+    def list_images(self, prefix: str = "", max_keys: int = 50, continuation_token: str = "") -> dict:  # nosec B107
         start = int(continuation_token or 0)
         keys = [p.relative_to(self.root).as_posix() for p in self._all_image_paths(prefix)]
         nobg_keys = {k for k in keys if _is_nobg_variant(k)}
@@ -126,7 +151,7 @@ class LocalStorage:
     def get_image_metadata(self, key: str) -> dict:
         path = self._path(key)
         if not path.is_file():
-            raise StorageError(f"Not found: {key}")
+            raise StorageError("Not found")
         rec = self._record(path)
         rec["content_type"] = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         return rec
@@ -138,7 +163,7 @@ class LocalStorage:
     def download_image(self, key: str) -> bytes:
         path = self._path(key)
         if not path.is_file():
-            raise StorageError(f"Not found: {key}")
+            raise StorageError("Not found")
         return path.read_bytes()
 
     def upload_image(self, key: str, data: bytes, content_type: str = "image/png") -> str:
@@ -187,7 +212,8 @@ class S3Storage:
         self._groups_cache_ts: float = 0
 
     def _iter_objects(self, prefix: str):
-        token = ""
+        # S3 pagination cursor, not a credential.
+        token = ""  # nosec B105
         while True:
             params: Dict = {"Bucket": self.bucket, "Prefix": prefix, "MaxKeys": 1000}
             if token:
@@ -199,7 +225,8 @@ class S3Storage:
                 return
             token = resp.get("NextContinuationToken", "")
 
-    def list_images(self, prefix: str = "", max_keys: int = 50, continuation_token: str = "") -> dict:
+    # "token" here is a pagination cursor, not a credential.
+    def list_images(self, prefix: str = "", max_keys: int = 50, continuation_token: str = "") -> dict:  # nosec B107
         start = int(continuation_token or 0)
         objs = [o for o in self._iter_objects(prefix) if o["Key"].lower().endswith(IMAGE_EXTS)]
         nobg_keys = {o["Key"] for o in objs if _is_nobg_variant(o["Key"])}
@@ -239,7 +266,7 @@ class S3Storage:
         return groups
 
     def get_image_metadata(self, key: str) -> dict:
-        head = self.client.head_object(Bucket=self.bucket, Key=key)
+        head = self.client.head_object(Bucket=self.bucket, Key=validate_key(key))
         return {
             "key": key,
             "size": head["ContentLength"],
@@ -254,20 +281,20 @@ class S3Storage:
         )
 
     def download_image(self, key: str) -> bytes:
-        return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        return self.client.get_object(Bucket=self.bucket, Key=validate_key(key))["Body"].read()
 
     def upload_image(self, key: str, data: bytes, content_type: str = "image/png") -> str:
-        self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
+        self.client.put_object(Bucket=self.bucket, Key=validate_key(key), Body=data, ContentType=content_type)
         self._groups_cache = None
         return self.generate_presigned_url(key)
 
     def delete_image(self, key: str) -> None:
-        self.client.delete_object(Bucket=self.bucket, Key=key)
+        self.client.delete_object(Bucket=self.bucket, Key=validate_key(key))
         self._groups_cache = None
 
     def key_exists(self, key: str) -> bool:
         try:
-            self.client.head_object(Bucket=self.bucket, Key=key)
+            self.client.head_object(Bucket=self.bucket, Key=validate_key(key))
             return True
         except Exception:
             return False

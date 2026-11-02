@@ -91,7 +91,14 @@ def main() -> None:
     p.set_defaults(func=cmd_clean)
 
     args = parser.parse_args()
-    args.func(args)
+    from image_edit_providers.base import ImageEditError
+    from services.errors import ImageTooLargeError, ModelUnavailableError
+    from utils.image_helpers import ImageValidationError
+
+    try:
+        args.func(args)
+    except (ModelUnavailableError, ImageValidationError, ImageTooLargeError, ImageEditError) as e:
+        sys.exit(f"error: {e}")
 
 
 if __name__ == "__main__":

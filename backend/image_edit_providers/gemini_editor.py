@@ -6,7 +6,14 @@ from io import BytesIO
 from typing import Optional
 from PIL import Image
 
-from .base import ImageEditProvider, ImageEditResult, ImageEditError, VEHICLE_PHOTO_CONTEXT
+from .base import (
+    REQUEST_TIMEOUT_S,
+    VEHICLE_PHOTO_CONTEXT,
+    ImageEditError,
+    ImageEditProvider,
+    ImageEditResult,
+    provider_failure,
+)
 
 
 class GeminiImageEditor(ImageEditProvider):
@@ -22,7 +29,12 @@ class GeminiImageEditor(ImageEditProvider):
     def _get_client(self):
         if self._client is None:
             from google import genai
-            self._client = genai.Client(api_key=self._api_key)
+            from google.genai import types
+
+            self._client = genai.Client(
+                api_key=self._api_key,
+                http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_S * 1000),  # milliseconds
+            )
         return self._client
 
     async def edit_image(
@@ -62,13 +74,7 @@ class GeminiImageEditor(ImageEditProvider):
                 ),
             )
         except Exception as e:
-            error_msg = str(e)
-            retryable = "quota" in error_msg.lower() or "rate" in error_msg.lower()
-            raise ImageEditError(
-                f"Gemini image edit failed: {error_msg}",
-                provider="gemini",
-                retryable=retryable,
-            )
+            raise provider_failure("gemini", e, ("quota", "rate", "429", "timeout", "timed out")) from e
 
         edited_bytes = None
         for part in response.parts:

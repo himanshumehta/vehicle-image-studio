@@ -17,18 +17,26 @@ from __future__ import annotations
 
 import io
 import logging
+import threading
 from typing import Optional
 
 import cv2
 import numpy as np
 from PIL import Image
 
+from services.errors import ModelUnavailableError
+from utils.image_helpers import decode_image
+
 logger = logging.getLogger(__name__)
 
+# Hugging Face repo -> pinned commit. Both models need trust_remote_code=True (their
+# architecture ships as Python in the repo), so the revision is pinned: a later push
+# to the repo cannot change the code that runs here. Bump deliberately after review.
 _TRANSFORMERS_MODELS = {
-    "birefnet": "ZhengPeng7/BiRefNet",
-    "rmbg-2.0": "briaai/RMBG-2.0",
+    "birefnet": ("ZhengPeng7/BiRefNet", "e2bf8e4460fc8fa32bba5ea4d94b3233d367b0e4"),
+    "rmbg-2.0": ("briaai/RMBG-2.0", "2fd7b4b0f2393ddb39a267fb62df6c010928a6c6"),
 }
+TRANSFORMERS_INPUT_SIZE = (1024, 1024)
 
 
 def refine_mask(mask_np: np.ndarray) -> np.ndarray:
@@ -53,6 +61,7 @@ class BackgroundRemovalService:
         self._model = None  # transformers model
         self._device = None
         self._transform = None
+        self._load_lock = threading.Lock()
 
     @property
     def model_name(self) -> str:
@@ -84,7 +93,7 @@ class BackgroundRemovalService:
             from torchvision import transforms
             from transformers import AutoModelForImageSegmentation
         except ImportError as e:  # pragma: no cover - depends on optional deps
-            raise RuntimeError(
+            raise ModelUnavailableError(
                 f"BG_REMOVAL_MODEL={name} needs the optional model dependencies: "
                 "pip install -r backend/requirements-models.txt"
             ) from e
@@ -97,16 +106,18 @@ class BackgroundRemovalService:
         else:
             self._device = torch.device("cpu")
 
-        repo = _TRANSFORMERS_MODELS[name]
+        repo, revision = _TRANSFORMERS_MODELS[name]
         token = get_settings().hf_token or None
         if name == "rmbg-2.0" and not token:
-            raise RuntimeError("BG_REMOVAL_MODEL=rmbg-2.0 requires HF_TOKEN (gated model, CC BY-NC 4.0)")
-        logger.info("Loading %s on %s...", repo, self._device)
-        self._model = AutoModelForImageSegmentation.from_pretrained(repo, trust_remote_code=True, token=token)
+            raise ModelUnavailableError("BG_REMOVAL_MODEL=rmbg-2.0 requires HF_TOKEN (gated model, CC BY-NC 4.0)")
+        logger.info("Loading %s@%s on %s...", repo, revision[:8], self._device)
+        self._model = AutoModelForImageSegmentation.from_pretrained(
+            repo, revision=revision, trust_remote_code=True, token=token
+        )
         self._model.to(self._device, dtype=torch.float32)
         self._model.eval()
         self._transform = transforms.Compose([
-            transforms.Resize((1024, 1024)),
+            transforms.Resize(TRANSFORMERS_INPUT_SIZE),
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
         ])
@@ -130,9 +141,10 @@ class BackgroundRemovalService:
 
     def remove_background(self, image_data: bytes) -> bytes:
         """Remove the background from encoded image bytes. Returns an RGBA PNG."""
-        if not self.is_loaded:
-            self.load_model()
-        original = Image.open(io.BytesIO(image_data)).convert("RGB")
+        with self._load_lock:
+            if not self.is_loaded:
+                self.load_model()
+        original = decode_image(image_data).convert("RGB")
         refined = refine_mask(self._predict_mask(original))
         result = original.convert("RGBA")
         result.putalpha(Image.fromarray((refined * 255).astype(np.uint8), mode="L"))

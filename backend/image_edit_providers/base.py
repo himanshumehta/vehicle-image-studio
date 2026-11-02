@@ -1,9 +1,15 @@
 """Abstract base for LLM-based image editing providers."""
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
-from typing import Optional
 from dataclasses import dataclass
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# Upper bound on one provider call; image edits normally finish well inside this.
+REQUEST_TIMEOUT_S = 120
 
 
 @dataclass
@@ -48,6 +54,15 @@ class ImageEditError(Exception):
         super().__init__(message)
         self.provider = provider
         self.retryable = retryable
+
+
+def provider_failure(provider: str, exc: Exception, retry_markers: tuple) -> ImageEditError:
+    """Log the provider's full error server-side; return a short, client-safe ImageEditError."""
+    detail = str(exc).lower()
+    retryable = any(marker in detail for marker in retry_markers)
+    logger.warning("%s image edit failed: %s: %s", provider, type(exc).__name__, exc)
+    reason = "rate limited or timed out, retry later" if retryable else type(exc).__name__
+    return ImageEditError(f"{provider} image edit failed ({reason})", provider=provider, retryable=retryable)
 
 
 VEHICLE_PHOTO_CONTEXT = (

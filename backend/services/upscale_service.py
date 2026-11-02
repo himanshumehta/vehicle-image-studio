@@ -16,12 +16,15 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
+import threading
 from typing import Optional
 
 import numpy as np
 from PIL import Image
+
+from services.errors import ImageTooLargeError, ModelUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +35,7 @@ TILE_SIZE = 256
 TILE_PAD = 32
 NET_SCALE = 4
 SUPPORTED_SCALES = (2, 4, 8)
+AUTO_DOWNLOAD_TIMEOUT_S = 900
 
 
 def model_path() -> str:
@@ -39,9 +43,33 @@ def model_path() -> str:
     return os.path.join(get_settings().models_dir, MODEL_FILENAME)
 
 
+def network_output_pixels(width: int, height: int, scale: int) -> int:
+    """Largest image the network produces for one request (8x runs a second pass on the 4x result)."""
+    passes = 2 if scale == 8 else 1
+    return width * height * NET_SCALE ** (2 * passes)
+
+
+def check_upscale_size(width: int, height: int, scale: int, limit: Optional[int] = None) -> None:
+    """Raise ImageTooLargeError if upscaling would exceed MAX_UPSCALE_OUTPUT_PIXELS.
+
+    Memory grows with the output (float32 accumulators of the full result), so
+    this is what keeps one request from exhausting RAM on a CPU box.
+    """
+    if limit is None:
+        from config import get_settings
+        limit = get_settings().max_upscale_output_pixels
+    produced = network_output_pixels(width, height, scale)
+    if produced > limit:
+        raise ImageTooLargeError(
+            f"{width}x{height} at {scale}x would produce {produced:,} pixels in the upscaler; "
+            f"the limit is {limit:,} (MAX_UPSCALE_OUTPUT_PIXELS)"
+        )
+
+
 class UpscaleService:
     def __init__(self):
         self._session = None
+        self._load_lock = threading.Lock()
 
     @property
     def is_loaded(self) -> bool:
@@ -53,15 +81,21 @@ class UpscaleService:
         path = model_path()
         if not os.path.exists(path):
             logger.info("Real-ESRGAN ONNX model missing; running %s ...", DOWNLOAD_SCRIPT)
-            result = subprocess.run(
-                [sys.executable, DOWNLOAD_SCRIPT, "--only", "realesrgan"],
-                capture_output=True, text=True, timeout=900,
-            )
-            if result.returncode != 0 or not os.path.exists(path):
-                raise RuntimeError(
-                    "Real-ESRGAN model not found and automatic download/conversion failed. "
-                    "Run: pip install -r backend/requirements-models.txt && "
-                    "python backend/scripts/download_models.py\n" + result.stderr[-2000:]
+            try:
+                # Fixed argument list (our own script), no shell.
+                result = subprocess.run(  # nosec B603
+                    [sys.executable, DOWNLOAD_SCRIPT, "--only", "realesrgan"],
+                    capture_output=True, text=True, timeout=AUTO_DOWNLOAD_TIMEOUT_S, check=False,
+                )
+                failed, stderr = result.returncode != 0, result.stderr
+            except subprocess.TimeoutExpired:
+                failed, stderr = True, "timed out"
+            if failed or not os.path.exists(path):
+                # Details (paths, tracebacks) go to the server log, not to API clients.
+                logger.error("Real-ESRGAN download/conversion failed:\n%s", stderr[-2000:])
+                raise ModelUnavailableError(
+                    "Real-ESRGAN model is missing. Run: pip install -r backend/requirements-models.txt "
+                    "&& python backend/scripts/download_models.py"
                 )
         logger.info("Loading Real-ESRGAN ONNX model from %s", path)
         self._session = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
@@ -104,8 +138,9 @@ class UpscaleService:
         """Upscale a PIL image by 2, 4 or 8. Returns RGB, or RGBA if the input had alpha."""
         if scale not in SUPPORTED_SCALES:
             raise ValueError(f"scale must be one of {SUPPORTED_SCALES}")
-        if self._session is None:
-            self.load_model()
+        with self._load_lock:
+            if self._session is None:
+                self.load_model()
 
         alpha: Optional[Image.Image] = None
         if image.mode in ("RGBA", "LA") or (image.mode == "P" and "transparency" in image.info):

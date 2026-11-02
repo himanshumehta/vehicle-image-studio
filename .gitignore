@@ -25,6 +25,8 @@ node_modules/
 frontend/.next/
 frontend/out/
 frontend/next-env.d.ts
+# Written by `next dev` (Next.js 16.4+) for coding agents; not project documentation
+frontend/AGENTS.md
 *.tsbuildinfo
 
 # OS / editors

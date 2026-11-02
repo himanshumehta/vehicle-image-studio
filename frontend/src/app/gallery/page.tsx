@@ -14,22 +14,15 @@ function GalleryPageInner() {
   const [tokenHistory, setTokenHistory] = useState<string[]>([""]);
   const [pageIndex, setPageIndex] = useState(0);
   const [goToInput, setGoToInput] = useState("");
-  const [isSkipping, setIsSkipping] = useState(false);
-  const [initialized, setInitialized] = useState(false);
+  // A deep link (?page=N) starts by walking the pagination tokens up to page N.
+  const [isSkipping, setIsSkipping] = useState(() => Boolean(brand) && initialPage > 1);
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const deepLinkHandled = useRef(false);
 
   const prefix = brand ? `vehicles/${brand}/` : "";
   const currentToken = tokenHistory[pageIndex];
-
-  // Reset pagination when brand changes
-  useEffect(() => {
-    setTokenHistory([""]);
-    setPageIndex(0);
-    setGoToInput("");
-    setInitialized(false);
-  }, [brand]);
 
   const syncUrl = useCallback(
     (page: number) => {
@@ -45,27 +38,20 @@ function GalleryPageInner() {
     [router, searchParams]
   );
 
-  // On mount, jump to the page from URL if needed
+  // On mount, jump to the page from the URL if needed.
   useEffect(() => {
-    if (!brand || initialized) return;
-    setInitialized(true);
-    if (initialPage <= 1) return;
-
+    if (!brand || deepLinkHandled.current || initialPage <= 1) return;
+    deepLinkHandled.current = true;
     const targetIndex = initialPage - 1;
-    (async () => {
-      setIsSkipping(true);
-      try {
-        const newTokens = await fetchPageTokens(prefix, 50, "", targetIndex);
+    fetchPageTokens(prefix, 50, "", targetIndex)
+      .then((newTokens) => {
         if (newTokens.length === 0) return;
         const updatedHistory = ["", ...newTokens];
         setTokenHistory(updatedHistory);
-        const finalIndex = Math.min(targetIndex, updatedHistory.length - 1);
-        setPageIndex(finalIndex);
-      } finally {
-        setIsSkipping(false);
-      }
-    })();
-  }, [initialized, initialPage, prefix, brand]);
+        setPageIndex(Math.min(targetIndex, updatedHistory.length - 1));
+      })
+      .finally(() => setIsSkipping(false));
+  }, [initialPage, prefix, brand]);
 
   const handleNextPage = (nextToken: string) => {
     const newHistory = tokenHistory.slice(0, pageIndex + 1);
@@ -121,7 +107,7 @@ function GalleryPageInner() {
   };
 
   const handleSelectBrand = (slug: string) => {
-    router.push(`/gallery?brand=${slug}`);
+    router.push(`/gallery?brand=${encodeURIComponent(slug)}`);
   };
 
   const brandDisplayName = brand
@@ -204,10 +190,16 @@ function GalleryPageInner() {
   );
 }
 
+/** Keyed by collection, so switching collections starts with fresh pagination state. */
+function GalleryForCollection() {
+  const brand = useSearchParams().get("brand") ?? "";
+  return <GalleryPageInner key={brand} />;
+}
+
 export default function GalleryPage() {
   return (
     <Suspense>
-      <GalleryPageInner />
+      <GalleryForCollection />
     </Suspense>
   );
 }

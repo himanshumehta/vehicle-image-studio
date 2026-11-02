@@ -1,20 +1,22 @@
 # Core runtime: API server, local storage, rembg background removal, ONNX upscaling.
-# Python 3.10-3.12 (rembg 2.0.61 does not support 3.13 yet).
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-python-multipart==0.0.20
-pydantic-settings==2.7.1
-Pillow==11.1.0
-numpy>=1.26,<3
-opencv-python-headless>=4.8
-rembg==2.0.61
-onnxruntime>=1.17
-requests>=2.31.0
+# Python 3.11+ (Pillow 13, numpy 2.3 and rembg 2.0.86 dropped 3.10). CI runs 3.11.
+# Direct dependencies are pinned or bounded to a major; Dependabot proposes updates.
+fastapi==0.162.0
+starlette>=1.3.1,<2   # floor: fixes for PYSEC-2026-248/249 and earlier multipart/range advisories
+uvicorn[standard]==0.54.0
+python-multipart==0.0.33
+pydantic-settings==2.16.2
+Pillow==13.0.0
+numpy>=2.3,<3
+opencv-python-headless>=4.8,<5
+rembg==2.0.86
+onnxruntime>=1.23.2,<2
+requests>=2.32,<3
 # Optional integrations (imported lazily, small)
-boto3>=1.35          # STORAGE_BACKEND=s3
-openai>=1.60         # OPENAI_API_KEY inpainting
-google-genai>=1.0.0  # GEMINI_API_KEY inpainting
+boto3>=1.35,<2       # STORAGE_BACKEND=s3
+openai>=1.60,<4      # OPENAI_API_KEY inpainting
+google-genai>=1.0.0,<3  # GEMINI_API_KEY inpainting
 # Tests
-pytest>=8.0.0
-pytest-asyncio>=0.24.0
-httpx>=0.27.0
+pytest>=8.0.0,<10
+pytest-asyncio>=0.24.0,<2
+httpx>=0.27.0,<1

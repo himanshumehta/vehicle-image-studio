@@ -2,10 +2,10 @@
 # runtime only for BG_REMOVAL_MODEL=birefnet or rmbg-2.0.
 # CPU wheels keep the download small:
 #   pip install -r requirements-models.txt --extra-index-url https://download.pytorch.org/whl/cpu
-torch>=2.2
-torchvision>=0.17
-onnx>=1.15            # used by torch.onnx.export
-transformers>=4.38.0,<5.0.0
-einops>=0.8.0
-kornia>=0.7.0
-timm>=1.0.0
+torch>=2.6,<3         # 2.6+: torch.load CVE-2025-32434 fix; weights_only=True is used regardless
+torchvision>=0.21,<1
+onnx>=1.17,<2         # used by torch.onnx.export
+transformers>=5.10,<6 # 5.10+: fixes PYSEC-2026-2288/2289/2290/3929; BiRefNet verified on 5.22.1
+einops>=0.8.0,<1
+kornia>=0.7.0,<1
+timm>=1.0.0,<2

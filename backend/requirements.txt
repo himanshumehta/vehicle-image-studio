@@ -8,7 +8,7 @@ python-multipart==0.0.33
 pydantic-settings==2.16.2
 Pillow==13.0.0
 numpy>=2.3,<3
-opencv-python-headless>=4.8,<5
+opencv-python-headless>=5.0.0.93,<6
 rembg==2.0.86
 onnxruntime>=1.23.2,<2
 requests>=2.32,<3

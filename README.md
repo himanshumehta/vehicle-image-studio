@@ -213,7 +213,7 @@ Backend tests run without weights or network: models are replaced by fakes (a ne
 
 ## Results
 
-Measured on an Apple M2 Max (12 cores, 32 GB), macOS 26.7, Python 3.11, ONNX Runtime 1.31 on the CPU (BiRefNet: torch 2.15, transformers 5.22). The machine was shared with other workloads during the run (load average about 22), so read these as upper bounds. "CLI" is the wall-clock time of one `cli.py` run including Python start-up and model loading; "API" is `curl`'s total time against a running server with the model already loaded.
+Measured on an Apple M2 Max (12 cores, 32 GB), macOS 26.7, Python 3.11, ONNX Runtime 1.31 on the CPU (BiRefNet: torch 2.15, transformers 5.22). The machine was shared with other workloads during the run (load average about 22), so read these as upper bounds. "CLI" is the wall-clock time of one `cli.py` run including Python start-up and model loading; "API" is `curl`'s total time against a running server, with the model already loaded unless the row says otherwise.
 
 | Operation | Input | Output | Path | Time |
 |---|---|---|---|---|
@@ -223,7 +223,7 @@ Measured on an Apple M2 Max (12 cores, 32 GB), macOS 26.7, Python 3.11, ONNX Run
 | Real-ESRGAN 2x | 320x213 | 640x426 | CLI | 15.0 s |
 | Real-ESRGAN 4x | 320x213 | 1280x852 | CLI | 13.4 s |
 | Real-ESRGAN 8x | 320x213 | 2560x1704 | CLI | 185.7 s |
-| Real-ESRGAN 2x | 320x213 | 640x426 | API | 13.8 s |
+| Real-ESRGAN 2x | 320x213 | 640x426 | API, first call incl. model load | 13.8 s |
 | Real-ESRGAN 2x | 1200x800 RGBA | 2400x1600 RGBA | API | 168.7 s |
 | BiRefNet (`BG_REMOVAL_MODEL=birefnet`, torch on Apple MPS, weights cached) | 1200x800 `hatchback.jpg` | 1200x800 RGBA PNG | CLI | 8.4 s |
 

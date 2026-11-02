@@ -1,0 +1,20 @@
+# Core runtime: API server, local storage, rembg background removal, ONNX upscaling.
+# Python 3.10-3.12 (rembg 2.0.61 does not support 3.13 yet).
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic-settings==2.7.1
+Pillow==11.1.0
+numpy>=1.26,<3
+opencv-python-headless>=4.8
+rembg==2.0.61
+onnxruntime>=1.17
+requests>=2.31.0
+# Optional integrations (imported lazily, small)
+boto3>=1.35          # STORAGE_BACKEND=s3
+openai>=1.60         # OPENAI_API_KEY inpainting
+google-genai>=1.0.0  # GEMINI_API_KEY inpainting
+# Tests
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+httpx>=0.27.0

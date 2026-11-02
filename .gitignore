@@ -1,0 +1,34 @@
+# Secrets - only .env.example is tracked
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Model weights (downloaded by backend/scripts/download_models.py)
+backend/models/
+*.onnx
+*.pth
+*.safetensors
+
+# Runtime data and demo outputs
+data/
+out/
+
+# Node / Next.js
+node_modules/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+*.tsbuildinfo
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

@@ -1,4 +1,3 @@
-import pytest
 from PIL import Image
 import io
 from utils.image_helpers import bytes_to_pil, pil_to_bytes

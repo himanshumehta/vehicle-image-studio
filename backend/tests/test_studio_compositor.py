@@ -1,4 +1,3 @@
-import pytest
 from PIL import Image
 from services.studio_compositor import (
     _create_gradient_background,

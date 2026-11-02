@@ -4,20 +4,10 @@ import { useProcessing } from "@/hooks/useProcessing";
 
 vi.mock("@/lib/api", () => ({
   removeBackground: vi.fn(),
-  compositeWithTemplate: vi.fn(),
-  compositeWithCustomFile: vi.fn(),
+  compositeBackground: vi.fn(),
   uploadProcessedImage: vi.fn(),
-  enhanceImageBlob: vi.fn(),
-  enhanceImageKey: vi.fn(),
-  upscaleImageBlob: vi.fn(),
-  upscaleImageKey: vi.fn(),
-  mirrorImageBlob: vi.fn(),
-  mirrorImageKey: vi.fn(),
-  cropImageBlob: vi.fn(),
-  cropImageKey: vi.fn(),
+  processImage: vi.fn(),
   llmEditImage: vi.fn(),
-  watermarkImage: vi.fn(),
-  watermarkImageKey: vi.fn(),
 }));
 
 const api = await import("@/lib/api");
@@ -100,14 +90,14 @@ describe("useProcessing", () => {
   });
 
   it("upscales the stored image by key before any edit", async () => {
-    (api.upscaleImageKey as any).mockResolvedValue("blob:upscaled");
+    (api.processImage as any).mockResolvedValue("blob:upscaled");
     const { result } = renderHook(() => useProcessing("vehicles/samples/a.png"));
 
     await act(async () => {
       await result.current.upscale("/api/files/vehicles/samples/a.png", 8);
     });
 
-    expect(api.upscaleImageKey).toHaveBeenCalledWith("vehicles/samples/a.png", 8);
+    expect(api.processImage).toHaveBeenCalledWith("upscale", { key: "vehicles/samples/a.png" }, { scale: 8 });
     expect(result.current.state).toBe("upscaled");
     expect(result.current.enhancedUrl).toBe("blob:upscaled");
   });

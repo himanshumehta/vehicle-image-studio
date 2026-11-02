@@ -16,6 +16,9 @@ from pydantic_settings import BaseSettings
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(BACKEND_DIR)
 
+# Largest accepted image upload (bytes), for every endpoint that takes one.
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+
 
 class Settings(BaseSettings):
     # --- Storage -----------------------------------------------------------

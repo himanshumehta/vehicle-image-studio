@@ -1,24 +1,23 @@
 "use client";
 import { useState, useCallback, useRef } from "react";
 import {
-  removeBackground,
-  compositeWithTemplate,
-  compositeWithCustomFile,
-  uploadProcessedImage,
-  enhanceImageBlob,
-  enhanceImageKey,
-  upscaleImageBlob,
-  upscaleImageKey,
-  mirrorImageBlob,
-  mirrorImageKey,
-  cropImageBlob,
-  cropImageKey,
+  compositeBackground,
   llmEditImage,
-  watermarkImage,
-  watermarkImageKey,
+  processImage,
+  removeBackground,
+  uploadProcessedImage,
 } from "@/lib/api";
-import type { UpscaleFactor } from "@/lib/api";
+import type { FormFields, ProcessEndpoint, UpscaleFactor } from "@/lib/api";
 import type { ProcessingState } from "@/lib/types";
+
+export interface WatermarkOptions {
+  text: string;
+  position?: string;
+  opacity?: number;
+  fontSize?: number;
+  color?: string;
+  repeat?: boolean;
+}
 
 interface HistoryEntry {
   bgRemovedUrl: string | null;
@@ -63,8 +62,8 @@ export function useProcessing(imageKey: string) {
       currentDisplayUrl: string,
       busy: ProcessingState,
       done: ProcessingState,
-      byBlob: (blob: Blob) => Promise<string>,
-      byKey: (key: string) => Promise<string>,
+      endpoint: ProcessEndpoint,
+      fields: FormFields,
       failMessage: string,
     ) => {
       const prevState = state;
@@ -72,13 +71,10 @@ export function useProcessing(imageKey: string) {
         setError(null);
         pushHistory();
         setState(busy);
-        let url: string;
-        if (currentDisplayUrl.startsWith("blob:")) {
-          const res = await fetch(currentDisplayUrl);
-          url = await byBlob(await res.blob());
-        } else {
-          url = await byKey(imageKey);
-        }
+        const source = currentDisplayUrl.startsWith("blob:")
+          ? { blob: await (await fetch(currentDisplayUrl)).blob() }
+          : { key: imageKey };
+        const url = await processImage(endpoint, source, fields);
         trackBlob(url);
         setEnhancedUrl(url);
         setState(done);
@@ -107,15 +103,13 @@ export function useProcessing(imageKey: string) {
     }
   }, [imageKey, popHistory, pushHistory, trackBlob]);
 
-  const applyTemplate = useCallback(
-    async (options: { templateId?: string; file?: File }) => {
+  const applyBackground = useCallback(
+    async (background?: File) => {
       try {
         setError(null);
         pushHistory();
         setState("compositing");
-        const resultUrl = options.file
-          ? await compositeWithCustomFile(imageKey, options.file)
-          : await compositeWithTemplate(imageKey, options.templateId || "studio");
+        const resultUrl = await compositeBackground(imageKey, background);
         trackBlob(resultUrl);
         setStudioUrl(resultUrl);
         setState("studio-ready");
@@ -134,8 +128,8 @@ export function useProcessing(imageKey: string) {
         currentDisplayUrl,
         "upscaling",
         "upscaled",
-        (b) => upscaleImageBlob(b, scale),
-        (k) => upscaleImageKey(k, scale),
+        "upscale",
+        { scale },
         "Upscale failed",
       ),
     [runOnCurrent],
@@ -143,13 +137,13 @@ export function useProcessing(imageKey: string) {
 
   const aiEnhance = useCallback(
     (currentDisplayUrl: string) =>
-      runOnCurrent(currentDisplayUrl, "enhancing", "enhanced", enhanceImageBlob, enhanceImageKey, "Enhance failed"),
+      runOnCurrent(currentDisplayUrl, "enhancing", "enhanced", "enhance", {}, "Enhance failed"),
     [runOnCurrent],
   );
 
   const mirror = useCallback(
     (currentDisplayUrl: string) =>
-      runOnCurrent(currentDisplayUrl, "mirroring", "mirrored", mirrorImageBlob, mirrorImageKey, "Mirror failed"),
+      runOnCurrent(currentDisplayUrl, "mirroring", "mirrored", "mirror", {}, "Mirror failed"),
     [runOnCurrent],
   );
 
@@ -159,24 +153,28 @@ export function useProcessing(imageKey: string) {
         currentDisplayUrl,
         "cropping",
         "cropped",
-        (b) => cropImageBlob(b, x, y, w, h),
-        (k) => cropImageKey(k, x, y, w, h),
+        "crop",
+        { crop_x: x, crop_y: y, crop_w: w, crop_h: h },
         "Crop failed",
       ),
     [runOnCurrent],
   );
 
   const addWatermark = useCallback(
-    (
-      currentDisplayUrl: string,
-      options: { text: string; position?: string; opacity?: number; fontSize?: number; color?: string; repeat?: boolean },
-    ) =>
+    (currentDisplayUrl: string, options: WatermarkOptions) =>
       runOnCurrent(
         currentDisplayUrl,
         "watermarking",
         "watermarked",
-        (b) => watermarkImage(b, options),
-        (k) => watermarkImageKey(k, options),
+        "watermark",
+        {
+          text: options.text,
+          position: options.position,
+          opacity: options.opacity,
+          font_size: options.fontSize,
+          color: options.color,
+          repeat: options.repeat || undefined,
+        },
         "Watermark failed",
       ),
     [runOnCurrent],
@@ -269,7 +267,7 @@ export function useProcessing(imageKey: string) {
     enhancedUrl,
     error,
     removeBg,
-    applyTemplate,
+    applyBackground,
     upscale,
     aiEnhance,
     mirror,

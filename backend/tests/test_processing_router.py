@@ -29,8 +29,8 @@ async def stored_key(client):
 
 
 @pytest.mark.asyncio
-async def test_remove_background_json_key(client, mock_models, stored_key):
-    resp = await client.post("/api/process/remove-background", json={"key": stored_key})
+async def test_remove_background_by_key(client, mock_models, stored_key):
+    resp = await client.post("/api/process/remove-background", data={"key": stored_key})
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "image/png"
 
@@ -45,7 +45,7 @@ async def test_remove_background_file(client, mock_models):
 
 @pytest.mark.asyncio
 async def test_remove_background_missing_key(client, mock_models):
-    resp = await client.post("/api/process/remove-background", json={"key": "vehicles/none.png"})
+    resp = await client.post("/api/process/remove-background", data={"key": "vehicles/none.png"})
     assert resp.status_code == 404
 
 
@@ -66,8 +66,14 @@ async def test_upscale_rejects_bad_scale(client, mock_models, stored_key):
 
 
 @pytest.mark.asyncio
-async def test_studio_composite(client, mock_models, stored_key):
-    resp = await client.post("/api/process/studio-composite", json={"key": stored_key})
+async def test_composite_on_studio_and_custom_background(client, mock_models, stored_key):
+    resp = await client.post("/api/process/composite-template", data={"key": stored_key})
+    assert resp.status_code == 200
+    resp = await client.post(
+        "/api/process/composite-template",
+        data={"key": stored_key},
+        files={"template_file": ("bg.png", make_png(80, 80, color=(0, 0, 255)), "image/png")},
+    )
     assert resp.status_code == 200
 
 

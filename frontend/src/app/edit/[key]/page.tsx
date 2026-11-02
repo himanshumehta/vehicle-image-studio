@@ -90,7 +90,7 @@ export default function EditorPage({ params }: { params: Promise<{ key: string }
       <header className="flex-none flex items-center justify-between px-6 py-3 border-b border-theme bg-surface-secondary/50">
         <div className="flex items-center gap-4 min-w-0">
           <Link
-            href={collection ? `/gallery?brand=${collection}` : "/gallery"}
+            href={collection ? `/gallery?brand=${encodeURIComponent(collection)}` : "/gallery"}
             className="text-th-secondary hover:text-th-primary transition-colors shrink-0"
           >
             &larr; {collection ? collection.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "Gallery"}
@@ -110,7 +110,7 @@ export default function EditorPage({ params }: { params: Promise<{ key: string }
           state={processing.state}
           onRemoveBg={processing.removeBg}
           onReplace={processing.replaceImage}
-          onApplyTemplate={processing.applyTemplate}
+          onApplyBackground={processing.applyBackground}
           onUpscale={(scale) => processing.upscale(displayUrl, scale)}
           onAiEnhance={() => processing.aiEnhance(displayUrl)}
           onMirror={() => processing.mirror(displayUrl)}

@@ -9,6 +9,7 @@ import re
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 
+from config import MAX_UPLOAD_BYTES
 from services.storage import LocalStorage, StorageError, derive_nobg_key, storage
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/images", tags=["images"])
 files_router = APIRouter(prefix="/api/files", tags=["files"])
 
-MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 _SAFE_SEGMENT = re.compile(r"[^a-zA-Z0-9._-]+")
 
 

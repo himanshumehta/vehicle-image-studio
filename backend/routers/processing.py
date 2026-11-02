@@ -1,32 +1,26 @@
 """Image-processing endpoints.
 
-Every endpoint accepts either a multipart ``file`` upload or a storage ``key``
-(form field, or JSON body for the legacy ``remove-background`` call) and
-returns the processed image bytes directly.
+Every endpoint takes multipart form data with either a ``file`` upload or a
+storage ``key`` and returns the processed image as PNG bytes.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image, ImageDraw, ImageFont
-from pydantic import BaseModel
 
 from image_edit_providers.base import CLEANUP_PRESETS
 from services.background_removal import bg_removal_service
 from services.storage import storage
-from services.studio_compositor import composite_studio, composite_with_template, smart_mirror
+from services.studio_compositor import composite_studio, composite_with_template
 from services.upscale_service import SUPPORTED_SCALES, upscale_service
+from config import MAX_UPLOAD_BYTES
 from utils.image_helpers import bytes_to_pil, pil_to_bytes
 
 router = APIRouter(prefix="/api/process", tags=["processing"])
 
-MAX_INPUT_BYTES = 25 * 1024 * 1024
-
-
-class ProcessRequest(BaseModel):
-    key: str
 
 
 def _png(img: Image.Image) -> Response:
@@ -43,24 +37,15 @@ async def _read_input(file: Optional[UploadFile], key: Optional[str]) -> bytes:
             raise HTTPException(status_code=404, detail=f"Image not found: {e}")
     else:
         raise HTTPException(status_code=400, detail="Provide a 'file' upload or a storage 'key'")
-    if len(data) > MAX_INPUT_BYTES:
+    if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=400, detail="Image too large. Max 25 MB.")
     return data
 
 
 @router.post("/remove-background")
-async def remove_background(request: Request):
-    """Remove the background. Multipart ``file`` or JSON ``{"key": ...}``. Returns RGBA PNG."""
-    content_type = request.headers.get("content-type", "")
-    if "multipart/form-data" in content_type:
-        form = await request.form()
-        uploaded = form.get("file")
-        key = form.get("key")
-        data = await _read_input(uploaded if uploaded is not None and not isinstance(uploaded, str) else None,
-                                 key if isinstance(key, str) else None)
-    else:
-        body = await request.json()
-        data = await _read_input(None, body.get("key"))
+async def remove_background(file: Optional[UploadFile] = File(None), key: Optional[str] = Form(None)):
+    """Cut out the vehicle. Returns an RGBA PNG."""
+    data = await _read_input(file, key)
     try:
         result = bg_removal_service.remove_background(data)
     except Exception as e:
@@ -98,21 +83,9 @@ async def enhance(file: Optional[UploadFile] = File(None), key: Optional[str] = 
     return _png(result)
 
 
-@router.post("/studio-composite")
-async def studio_composite(request: ProcessRequest):
-    """Remove the background and place the vehicle on a white studio backdrop."""
-    data = await _read_input(None, request.key)
-    try:
-        subject = bytes_to_pil(bg_removal_service.remove_background(data))
-        return _png(composite_studio(subject))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.post("/composite-template")
 async def composite_template(
     key: str = Form(...),
-    template: Optional[str] = Form(None),
     template_file: Optional[UploadFile] = File(None),
 ):
     """Cut out the vehicle and composite it over the white studio or an uploaded backdrop."""
@@ -129,9 +102,9 @@ async def composite_template(
 
 @router.post("/mirror")
 async def mirror(file: Optional[UploadFile] = File(None), key: Optional[str] = Form(None)):
-    """Flip horizontally (keeps detected text readable when EasyOCR is installed)."""
+    """Flip horizontally."""
     data = await _read_input(file, key)
-    return _png(smart_mirror(bytes_to_pil(data)))
+    return _png(bytes_to_pil(data).transpose(Image.FLIP_LEFT_RIGHT))
 
 
 @router.post("/crop")

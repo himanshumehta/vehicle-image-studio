@@ -1,8 +1,7 @@
 @import "tailwindcss";
 
-/* ── Theme Tokens ── */
-:root,
-[data-theme="dark"] {
+/* ── Theme tokens (single dark theme) ── */
+:root {
   --surface:          #09090b;   /* zinc-950 */
   --surface-secondary:#18181b;   /* zinc-900 */
   --surface-tertiary: #27272a;   /* zinc-800 */
@@ -23,59 +22,6 @@
   --input-bg:         #18181b;   /* zinc-900 */
   --input-border:     #3f3f46;   /* zinc-700 */
   --input-focus:      #52525b;   /* zinc-600 */
-
-
-  --glass-bg:         rgba(255,255,255,0.03);
-  --glass-border:     rgba(255,255,255,0.06);
-  --glass-strong-bg:  rgba(255,255,255,0.05);
-  --glass-strong-border: rgba(255,255,255,0.08);
-
-  --scrollbar-thumb:  rgba(255,255,255,0.1);
-  --scrollbar-hover:  rgba(255,255,255,0.2);
-
-  --shimmer-color:    #ffffff;
-  --focus-ring:       rgba(255,255,255,0.7);
-  --ambient-glow:     rgba(255,255,255,0.06);
-  --gradient-border-from: rgba(255,255,255,0.1);
-  --gradient-border-to:   rgba(255,255,255,0.02);
-}
-
-[data-theme="light"] {
-  --surface:          #ffffff;
-  --surface-secondary:#fafafa;   /* zinc-50 */
-  --surface-tertiary: #f4f4f5;   /* zinc-100 */
-  --surface-elevated: #e4e4e7;   /* zinc-200 */
-  --surface-overlay:  rgba(0,0,0,0.3);
-
-  --text-primary:     #18181b;   /* zinc-900 */
-  --text-secondary:   #52525b;   /* zinc-600 */
-  --text-tertiary:    #71717a;   /* zinc-500 */
-  --text-muted:       #a1a1aa;   /* zinc-400 */
-
-  --border-default:   #e4e4e7;   /* zinc-200 */
-  --border-strong:    #d4d4d8;   /* zinc-300 */
-
-  --interactive:      #f4f4f5;   /* zinc-100 */
-  --interactive-hover:#e4e4e7;   /* zinc-200 */
-
-  --input-bg:         #ffffff;
-  --input-border:     #d4d4d8;   /* zinc-300 */
-  --input-focus:      #a1a1aa;   /* zinc-400 */
-
-
-  --glass-bg:         rgba(0,0,0,0.03);
-  --glass-border:     rgba(0,0,0,0.06);
-  --glass-strong-bg:  rgba(0,0,0,0.05);
-  --glass-strong-border: rgba(0,0,0,0.08);
-
-  --scrollbar-thumb:  rgba(0,0,0,0.15);
-  --scrollbar-hover:  rgba(0,0,0,0.25);
-
-  --shimmer-color:    #18181b;
-  --focus-ring:       rgba(0,0,0,0.5);
-  --ambient-glow:     rgba(0,0,0,0.04);
-  --gradient-border-from: rgba(0,0,0,0.08);
-  --gradient-border-to:   rgba(0,0,0,0.02);
 }
 
 @theme inline {
@@ -98,10 +44,6 @@
   --color-input-surface:    var(--input-bg);
   --color-input-border:     var(--input-border);
   --color-input-focus:      var(--input-focus);
-
-
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
 }
 
 body {

@@ -1,19 +1,29 @@
+/** One original image in storage, as returned by GET /api/images. */
 export interface StoredImage {
   key: string;
   size: number;
   last_modified: string;
-  url?: string;
+  url: string;
   has_nobg?: boolean;
+  nobg_key?: string | null;
 }
 
 export interface ImageMetadata extends StoredImage {
   content_type: string;
-  url: string;
+  nobg_variant?: { key: string; exists: boolean; url: string | null };
 }
 
 export interface ImagesResponse {
   images: StoredImage[];
   count: number;
+  next_token: string;
+}
+
+/** Response of the import and save endpoints. */
+export interface SavedImage {
+  key: string;
+  url: string;
+  size: number;
 }
 
 export type ProcessingState =

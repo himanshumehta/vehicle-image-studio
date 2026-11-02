@@ -2,23 +2,15 @@
 import { useState, useRef, useEffect } from "react";
 import { BUSY_STATES, type ProcessingState } from "@/lib/types";
 import type { UpscaleFactor } from "@/lib/api";
+import type { WatermarkOptions } from "@/hooks/useProcessing";
 
 const UPSCALE_FACTORS: UpscaleFactor[] = [2, 4, 8];
-
-interface WatermarkOptions {
-  text: string;
-  position?: string;
-  opacity?: number;
-  fontSize?: number;
-  color?: string;
-  repeat?: boolean;
-}
 
 interface EditorToolbarProps {
   state: ProcessingState;
   onRemoveBg: () => void;
   onReplace: (file: File) => void;
-  onApplyTemplate: (options: { templateId?: string; file?: File }) => void;
+  onApplyBackground: (background?: File) => void;
   onUpscale: (scale: UpscaleFactor) => void;
   onAiEnhance: () => void;
   onMirror: () => void;
@@ -165,7 +157,7 @@ export function EditorToolbar({
   state,
   onRemoveBg,
   onReplace,
-  onApplyTemplate,
+  onApplyBackground,
   onUpscale,
   onAiEnhance,
   onMirror,
@@ -223,7 +215,7 @@ export function EditorToolbar({
     const file = e.target.files?.[0];
     if (file) {
       setShowPicker(false);
-      onApplyTemplate({ file });
+      onApplyBackground(file);
     }
     // Reset input so same file can be selected again
     e.target.value = "";
@@ -285,11 +277,11 @@ export function EditorToolbar({
               <button
                 onClick={() => {
                   setShowPicker(false);
-                  onApplyTemplate({ templateId: "studio" });
+                  onApplyBackground();
                 }}
                 className="w-full px-3 py-2 bg-interactive-hover text-th-primary rounded-lg hover:bg-surface-elevated transition-colors text-sm text-left"
               >
-                White studio (shadow + reflection)
+                White studio backdrop
               </button>
               <button
                 onClick={() => fileInputRef.current?.click()}

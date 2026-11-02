@@ -111,9 +111,9 @@ export function ImageGrid({
           <ImageCard
             key={img.key}
             imageKey={img.key}
-            url={img.url || ""}
+            url={img.url}
             size={img.size}
-            hasNobg={(img as Record<string, unknown>).has_nobg as boolean | undefined}
+            hasNobg={img.has_nobg}
             onDeleted={() => refresh()}
           />
         ))}

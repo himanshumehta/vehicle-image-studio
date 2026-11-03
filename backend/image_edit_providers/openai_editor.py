@@ -7,7 +7,16 @@ from io import BytesIO
 from typing import Optional
 from PIL import Image
 
-from .base import REQUEST_TIMEOUT_S, VEHICLE_PHOTO_CONTEXT, ImageEditProvider, ImageEditResult, provider_failure
+from .base import (
+    OPENAI_SIZES,
+    REQUEST_TIMEOUT_S,
+    VEHICLE_PHOTO_CONTEXT,
+    ImageEditProvider,
+    ImageEditResult,
+    nearest_ratio,
+    provider_failure,
+    upright,
+)
 
 QUALITY_MAP = {"low": "low", "medium": "medium", "high": "high"}
 COST_ESTIMATES = {"low": 0.009, "medium": 0.034, "high": 0.133}
@@ -40,14 +49,8 @@ class OpenAIImageEditor(ImageEditProvider):
         client = self._get_client()
 
         if not size:
-            img = Image.open(BytesIO(image_bytes))
-            w, h = img.size
-            if w > h:
-                size = "1536x1024"
-            elif h > w:
-                size = "1024x1536"
-            else:
-                size = "1024x1024"
+            img = upright(Image.open(BytesIO(image_bytes)))
+            size = nearest_ratio(*img.size, OPENAI_SIZES)
 
         context = system_context or VEHICLE_PHOTO_CONTEXT
         full_prompt = f"{context}\n\nUser request: {prompt}"

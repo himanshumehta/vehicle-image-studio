@@ -1,0 +1,633 @@
+{
+  "bg_model": "u2net",
+  "environment": {
+    "python": "3.11.13",
+    "platform": "Darwin arm64",
+    "packages": {
+      "numpy": "2.4.6",
+      "pillow": "11.1.0",
+      "opencv-python-headless": "5.0.0.93",
+      "onnxruntime": "1.31.1",
+      "rembg": "2.0.61",
+      "google-genai": "2.34.0",
+      "fastapi": "0.115.6"
+    }
+  },
+  "scenes": [
+    "car-00",
+    "bike-01",
+    "car-02",
+    "bike-03",
+    "car-04",
+    "bike-05",
+    "car-06",
+    "bike-07",
+    "car-08",
+    "bike-09",
+    "car-10",
+    "bike-11",
+    "car-12",
+    "bike-13",
+    "car-14",
+    "bike-15",
+    "car-16",
+    "bike-17",
+    "car-18",
+    "bike-19"
+  ],
+  "edit_preservation": {
+    "scenes": 20,
+    "params": {
+      "threshold": 8,
+      "margin_px": 3,
+      "band_px": 32,
+      "max_changed_outside": 0.01,
+      "min_psnr_outside_db": 35.0,
+      "min_changed_inside": 0.05
+    },
+    "cases": {
+      "good_edit": {
+        "description": "inpaint exactly the plate + watermark boxes",
+        "expected": "pass",
+        "verdicts": {
+          "pass": 20
+        },
+        "changed_outside_frac": {
+          "min": 0.0,
+          "max": 0.0
+        },
+        "changed_near_mask_frac": {
+          "min": 0.0,
+          "max": 0.0
+        },
+        "psnr_outside_db": {
+          "min": 99.0,
+          "max": 99.0
+        },
+        "changed_inside_frac": {
+          "min": 0.5041,
+          "max": 0.7451
+        },
+        "gate": true
+      },
+      "bleeding_edit": {
+        "description": "inpaint the boxes grown by 24 px",
+        "expected": "fail",
+        "verdicts": {
+          "changed_outside_mask": 20
+        },
+        "changed_outside_frac": {
+          "min": 0.0108,
+          "max": 0.0349
+        },
+        "changed_near_mask_frac": {
+          "min": 0.0919,
+          "max": 0.2953
+        },
+        "psnr_outside_db": {
+          "min": 20.7885,
+          "max": 32.8836
+        },
+        "changed_inside_frac": {
+          "min": 0.5949,
+          "max": 0.9285
+        },
+        "gate": true
+      },
+      "global_colour_shift": {
+        "description": "good edit, then RGB +12/+4/-8 on the whole frame",
+        "expected": "fail",
+        "verdicts": {
+          "changed_outside_mask": 20
+        },
+        "changed_outside_frac": {
+          "min": 0.9971,
+          "max": 1.0
+        },
+        "changed_near_mask_frac": {
+          "min": 0.9951,
+          "max": 1.0
+        },
+        "psnr_outside_db": {
+          "min": 29.3995,
+          "max": 29.4071
+        },
+        "changed_inside_frac": {
+          "min": 0.8789,
+          "max": 0.9956
+        },
+        "gate": true
+      },
+      "no_op": {
+        "description": "output identical to the input",
+        "expected": "no_edit_inside_mask",
+        "verdicts": {
+          "no_edit_inside_mask": 20
+        },
+        "changed_outside_frac": {
+          "min": 0.0,
+          "max": 0.0
+        },
+        "changed_near_mask_frac": {
+          "min": 0.0,
+          "max": 0.0
+        },
+        "psnr_outside_db": {
+          "min": 99.0,
+          "max": 99.0
+        },
+        "changed_inside_frac": {
+          "min": 0.0,
+          "max": 0.0
+        },
+        "gate": true
+      },
+      "resized_output": {
+        "description": "good edit returned at 16:9 instead of 3:2",
+        "expected": "size_mismatch",
+        "verdicts": {
+          "size_mismatch": 20
+        },
+        "changed_outside_frac": null,
+        "changed_near_mask_frac": null,
+        "psnr_outside_db": null,
+        "changed_inside_frac": null,
+        "gate": true
+      },
+      "good_edit_jpeg_q92": {
+        "description": "good edit, then a whole-frame JPEG q92 re-encode",
+        "expected": null,
+        "verdicts": {
+          "changed_outside_mask": 11,
+          "pass": 9
+        },
+        "changed_outside_frac": {
+          "min": 0.007,
+          "max": 0.0259
+        },
+        "changed_near_mask_frac": {
+          "min": 0.0137,
+          "max": 0.0655
+        },
+        "psnr_outside_db": {
+          "min": 39.2967,
+          "max": 42.9507
+        },
+        "changed_inside_frac": {
+          "min": 0.5014,
+          "max": 0.7469
+        },
+        "gate": null
+      }
+    },
+    "separation": {
+      "good_max_changed_outside": 0.0,
+      "bad_min_changed_outside": 0.0108
+    }
+  },
+  "gemini_adapter": {
+    "cases": {
+      "success_response": {
+        "verdict": "pass",
+        "identical_to_fixture": true,
+        "changed_outside_frac": 0.0,
+        "provider": "gemini",
+        "size": [
+          960,
+          640
+        ]
+      },
+      "blocked_response": {
+        "outcome": "ImageEditError(retryable=False)"
+      },
+      "http": {
+        "success": {
+          "status": 200,
+          "expected": 200,
+          "x_edit_provider": "gemini"
+        },
+        "blocked": {
+          "status": 502,
+          "expected": 502,
+          "x_edit_provider": null
+        }
+      },
+      "aspect_ratio": {
+        "rows": [
+          {
+            "input": "1200x800",
+            "input_ratio": 1.5,
+            "requested": "3:2",
+            "requested_ratio": 1.5,
+            "matches": true
+          },
+          {
+            "input": "1024x1024",
+            "input_ratio": 1.0,
+            "requested": "1:1",
+            "requested_ratio": 1.0,
+            "matches": true
+          },
+          {
+            "input": "800x1200",
+            "input_ratio": 0.667,
+            "requested": "2:3",
+            "requested_ratio": 0.667,
+            "matches": true
+          },
+          {
+            "input": "1600x1200",
+            "input_ratio": 1.333,
+            "requested": "4:3",
+            "requested_ratio": 1.333,
+            "matches": true
+          },
+          {
+            "input": "1920x1080",
+            "input_ratio": 1.778,
+            "requested": "16:9",
+            "requested_ratio": 1.778,
+            "matches": true
+          }
+        ],
+        "sdk_supported_ratios": [
+          "1:1",
+          "2:3",
+          "3:2",
+          "3:4",
+          "4:3",
+          "9:16",
+          "16:9",
+          "21:9"
+        ],
+        "finding": null
+      }
+    }
+  },
+  "background_removal": {
+    "harness": {
+      "stubs": {
+        "oracle": {
+          "iou_refined": {
+            "mean": 0.974,
+            "min": 0.9602,
+            "max": 0.9871
+          },
+          "iou_raw": {
+            "mean": 1.0,
+            "min": 1.0,
+            "max": 1.0
+          },
+          "iou_refined_car": {
+            "mean": 0.9862,
+            "min": 0.9852,
+            "max": 0.9871
+          },
+          "iou_refined_bike": {
+            "mean": 0.9619,
+            "min": 0.9602,
+            "max": 0.9638
+          }
+        },
+        "shifted_40px": {
+          "iou_refined": {
+            "mean": 0.6949,
+            "min": 0.5862,
+            "max": 0.8027
+          },
+          "iou_raw": {
+            "mean": 0.7011,
+            "min": 0.5948,
+            "max": 0.8067
+          },
+          "iou_refined_car": {
+            "mean": 0.7865,
+            "min": 0.7726,
+            "max": 0.8027
+          },
+          "iou_refined_bike": {
+            "mean": 0.6033,
+            "min": 0.5862,
+            "max": 0.6233
+          }
+        },
+        "empty": {
+          "iou_refined": {
+            "mean": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          },
+          "iou_raw": {
+            "mean": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          },
+          "iou_refined_car": {
+            "mean": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          },
+          "iou_refined_bike": {
+            "mean": 0.0,
+            "min": 0.0,
+            "max": 0.0
+          }
+        }
+      }
+    },
+    "live": {
+      "model": "u2net",
+      "weights": "~/.u2net/u2net.onnx",
+      "weights_bytes": 175997641,
+      "load_seconds": 0.33,
+      "iou_refined": {
+        "mean": 0.8116,
+        "min": 0.4562,
+        "max": 0.9905
+      },
+      "iou_raw": {
+        "mean": 0.8103,
+        "min": 0.4546,
+        "max": 0.9886
+      },
+      "iou_refined_car": {
+        "mean": 0.9865,
+        "min": 0.9736,
+        "max": 0.9905
+      },
+      "iou_refined_bike": {
+        "mean": 0.6366,
+        "min": 0.4562,
+        "max": 0.6917
+      },
+      "seconds_per_image": {
+        "mean": 0.4194,
+        "min": 0.407,
+        "max": 0.438
+      },
+      "per_scene": [
+        {
+          "scene": "car-00",
+          "kind": "car",
+          "iou_refined": 0.9885,
+          "iou_raw": 0.9886,
+          "seconds": 0.436
+        },
+        {
+          "scene": "bike-01",
+          "kind": "bike",
+          "iou_refined": 0.6917,
+          "iou_raw": 0.6935,
+          "seconds": 0.438
+        },
+        {
+          "scene": "car-02",
+          "kind": "car",
+          "iou_refined": 0.9905,
+          "iou_raw": 0.985,
+          "seconds": 0.414
+        },
+        {
+          "scene": "bike-03",
+          "kind": "bike",
+          "iou_refined": 0.6838,
+          "iou_raw": 0.6851,
+          "seconds": 0.417
+        },
+        {
+          "scene": "car-04",
+          "kind": "car",
+          "iou_refined": 0.9894,
+          "iou_raw": 0.9824,
+          "seconds": 0.411
+        },
+        {
+          "scene": "bike-05",
+          "kind": "bike",
+          "iou_refined": 0.6214,
+          "iou_raw": 0.6218,
+          "seconds": 0.421
+        },
+        {
+          "scene": "car-06",
+          "kind": "car",
+          "iou_refined": 0.9875,
+          "iou_raw": 0.984,
+          "seconds": 0.414
+        },
+        {
+          "scene": "bike-07",
+          "kind": "bike",
+          "iou_refined": 0.6779,
+          "iou_raw": 0.6777,
+          "seconds": 0.418
+        },
+        {
+          "scene": "car-08",
+          "kind": "car",
+          "iou_refined": 0.989,
+          "iou_raw": 0.9849,
+          "seconds": 0.407
+        },
+        {
+          "scene": "bike-09",
+          "kind": "bike",
+          "iou_refined": 0.6409,
+          "iou_raw": 0.6433,
+          "seconds": 0.421
+        },
+        {
+          "scene": "car-10",
+          "kind": "car",
+          "iou_refined": 0.988,
+          "iou_raw": 0.9784,
+          "seconds": 0.409
+        },
+        {
+          "scene": "bike-11",
+          "kind": "bike",
+          "iou_refined": 0.4562,
+          "iou_raw": 0.4546,
+          "seconds": 0.42
+        },
+        {
+          "scene": "car-12",
+          "kind": "car",
+          "iou_refined": 0.9803,
+          "iou_raw": 0.9761,
+          "seconds": 0.415
+        },
+        {
+          "scene": "bike-13",
+          "kind": "bike",
+          "iou_refined": 0.6468,
+          "iou_raw": 0.6523,
+          "seconds": 0.421
+        },
+        {
+          "scene": "car-14",
+          "kind": "car",
+          "iou_refined": 0.9889,
+          "iou_raw": 0.9822,
+          "seconds": 0.412
+        },
+        {
+          "scene": "bike-15",
+          "kind": "bike",
+          "iou_refined": 0.682,
+          "iou_raw": 0.6962,
+          "seconds": 0.424
+        },
+        {
+          "scene": "car-16",
+          "kind": "car",
+          "iou_refined": 0.9736,
+          "iou_raw": 0.9674,
+          "seconds": 0.424
+        },
+        {
+          "scene": "bike-17",
+          "kind": "bike",
+          "iou_refined": 0.634,
+          "iou_raw": 0.6359,
+          "seconds": 0.422
+        },
+        {
+          "scene": "car-18",
+          "kind": "car",
+          "iou_refined": 0.9895,
+          "iou_raw": 0.9867,
+          "seconds": 0.423
+        },
+        {
+          "scene": "bike-19",
+          "kind": "bike",
+          "iou_refined": 0.6313,
+          "iou_raw": 0.6307,
+          "seconds": 0.421
+        }
+      ]
+    }
+  },
+  "guards": {
+    "cases": [
+      {
+        "case": "html_bytes_named_png",
+        "endpoint": "/api/process/remove-background",
+        "expected": 400,
+        "status": 400
+      },
+      {
+        "case": "gif_upload",
+        "endpoint": "/api/process/remove-background",
+        "expected": 400,
+        "status": 400
+      },
+      {
+        "case": "bmp_upload",
+        "endpoint": "/api/process/mirror",
+        "expected": 400,
+        "status": 400
+      },
+      {
+        "case": "tiff_upload",
+        "endpoint": "/api/process/mirror",
+        "expected": 400,
+        "status": 400
+      },
+      {
+        "case": "pixel_bomb_header",
+        "endpoint": "/api/process/mirror",
+        "expected": 400,
+        "status": 400
+      },
+      {
+        "case": "upload_over_25mb",
+        "endpoint": "/api/process/mirror",
+        "expected": 413,
+        "status": 413
+      },
+      {
+        "case": "upscale_output_over_limit",
+        "endpoint": "/api/process/upscale",
+        "expected": 413,
+        "status": 413
+      },
+      {
+        "case": "upscale_bad_scale",
+        "endpoint": "/api/process/upscale",
+        "expected": 400,
+        "status": 400
+      },
+      {
+        "case": "llm_edit_junk_before_paid_call",
+        "endpoint": "/api/process/llm-edit",
+        "expected": 400,
+        "status": 400
+      },
+      {
+        "case": "llm_edit_prompt_too_long",
+        "endpoint": "/api/process/llm-edit",
+        "expected": 422,
+        "status": 422
+      },
+      {
+        "case": "llm_edit_unknown_preset",
+        "endpoint": "/api/process/llm-edit",
+        "expected": 400,
+        "status": 400
+      },
+      {
+        "case": "valid_png_accepted",
+        "endpoint": "/api/process/remove-background",
+        "expected": 200,
+        "status": 200
+      },
+      {
+        "case": "llm_edit_without_key",
+        "endpoint": "/api/process/llm-edit",
+        "expected": 503,
+        "status": 503
+      }
+    ],
+    "upscaler_called": false,
+    "provider_called": false,
+    "bomb_bytes": 38902
+  },
+  "gates": {
+    "edit_preservation/good_edit": true,
+    "edit_preservation/bleeding_edit": true,
+    "edit_preservation/global_colour_shift": true,
+    "edit_preservation/no_op": true,
+    "edit_preservation/resized_output": true,
+    "edit_preservation/separation": true,
+    "gemini/success_response": true,
+    "gemini/blocked_response": true,
+    "gemini/http_success": true,
+    "gemini/http_blocked": true,
+    "bg_harness/oracle_scores_high": true,
+    "bg_harness/empty_scores_zero": true,
+    "bg_harness/ordering": true,
+    "guards/html_bytes_named_png": true,
+    "guards/gif_upload": true,
+    "guards/bmp_upload": true,
+    "guards/tiff_upload": true,
+    "guards/pixel_bomb_header": true,
+    "guards/upload_over_25mb": true,
+    "guards/upscale_output_over_limit": true,
+    "guards/upscale_bad_scale": true,
+    "guards/llm_edit_junk_before_paid_call": true,
+    "guards/llm_edit_prompt_too_long": true,
+    "guards/llm_edit_unknown_preset": true,
+    "guards/valid_png_accepted": true,
+    "guards/llm_edit_without_key": true,
+    "guards/upscaler_not_run_for_refused_requests": true,
+    "guards/no_paid_call_for_refused_requests": true
+  },
+  "summary": {
+    "passed": 28,
+    "total": 28,
+    "seconds": 28.9
+  },
+  "findings": []
+}

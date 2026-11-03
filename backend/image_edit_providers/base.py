@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 import logging
+import math
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
+
+from PIL import Image, ImageOps
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +67,29 @@ def provider_failure(provider: str, exc: Exception, retry_markers: tuple) -> Ima
     logger.warning("%s image edit failed: %s: %s", provider, type(exc).__name__, exc)
     reason = "rate limited or timed out, retry later" if retryable else type(exc).__name__
     return ImageEditError(f"{provider} image edit failed ({reason})", provider=provider, retryable=retryable)
+
+
+# Output aspect ratios the Gemini image models accept.
+GEMINI_ASPECT_RATIOS = ("1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9")
+# Output sizes the OpenAI image edit endpoint accepts.
+OPENAI_SIZES = ("1024x1024", "1536x1024", "1024x1536")
+
+
+def upright(img: Image.Image) -> Image.Image:
+    """``img`` rotated/flipped as its EXIF orientation says, i.e. as a viewer sees it."""
+    return ImageOps.exif_transpose(img) if img.getexif().get(0x0112, 1) != 1 else img
+
+
+def nearest_ratio(width: int, height: int, choices) -> str:
+    """The ``"W:H"`` (or ``"WxH"``) choice closest to width/height, compared on a log scale
+    so that a ratio and its reciprocal are equally far from 1:1."""
+    target = math.log(width / height)
+
+    def distance(choice: str) -> float:
+        w, h = (float(x) for x in re.split(r"[:x]", choice))
+        return abs(math.log(w / h) - target)
+
+    return min(choices, key=distance)
 
 
 VEHICLE_PHOTO_CONTEXT = (

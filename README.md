@@ -107,7 +107,7 @@ A request carries either an uploaded image or a storage key. The router validate
 - **Human in the loop.** Every result, local or generative, lands in the editor as an unsaved version with undo and a before/after slider. Nothing is written to storage until the user clicks Save, and the AI panel is disabled unless a key is configured.
 - **Cost and latency controls.** The UI does not retry AI edits (each retry would be billed); provider clients have a 120 s timeout, and the OpenAI client retries at most once. Rate-limit and timeout errors map to `429` so the user can try later; everything else is `502` with a short message, the full provider error going to the server log.
 - **Fallbacks.** With no key the studio still works offline. With two keys, `IMAGE_EDIT_PROVIDER` picks the default and the other is used if the preferred one is not configured.
-- **Evaluation.** The adapters are tested with stub clients (request shape, size selection, error classification, secret-free messages). There is no automated quality eval of model outputs; the demo images above are the visual check for the local models.
+- **Evaluation.** The adapters are tested with stub clients (request shape, size selection, error classification, secret-free messages), and an offline eval suite ([Evals](#evals)) scores edit preservation outside the plate/watermark mask, background-removal masks against exact ground truth, and the input guards. There is no automated quality eval of live generative outputs.
 
 ## Reliability and operations
 
@@ -204,12 +204,45 @@ All variables are optional. Put them in `.env` at the repository root (see [`.en
 ## Testing
 
 ```bash
-(cd backend && pytest -q)                                  # 97 tests
+(cd backend && pytest -q)                                  # 111 tests
 (cd frontend && npm test)                                  # 70 tests (vitest)
 (cd frontend && npm run lint && npx tsc --noEmit && npm run build)
 ```
 
-Backend tests run without weights or network: models are replaced by fakes (a nearest-neighbour stand-in checks the tiling arithmetic and seam handling), and the provider adapters use stub clients. They cover the routers end to end through ASGI, local storage, mask refinement, compositing, upscaling scales and alpha, and a security suite (`tests/test_security.py`: key validation, stored-XSS path, non-image uploads, body and pixel limits, cross-site writes, Host checks, CORS, job-limiter saturation, error redaction, pinned model revisions). Frontend tests cover the API client (form building, retry and error mapping), the processing hook's state machine and undo, keyboard shortcuts, zoom and the editor components. CI runs both suites, a production build and the security scans on every push.
+Backend tests run without weights or network: models are replaced by fakes (a nearest-neighbour stand-in checks the tiling arithmetic and seam handling), and the provider adapters use stub clients. They cover the routers end to end through ASGI, local storage, mask refinement, compositing, upscaling scales and alpha, and a security suite (`tests/test_security.py`: key validation, stored-XSS path, non-image uploads, body and pixel limits, cross-site writes, Host checks, CORS, job-limiter saturation, error redaction, pinned model revisions). Frontend tests cover the API client (form building, retry and error mapping), the processing hook's state machine and undo, keyboard shortcuts, zoom and the editor components. CI runs both suites, the offline evals (stub segmentation model, see [Evals](#evals)), a production build and the security scans on every push.
+
+## Evals
+
+```bash
+python evals/run_evals.py                    # deterministic suites, stub segmentation model (what CI runs)
+python evals/run_evals.py --bg-model u2net   # also scores the cached u2net; refuses to download weights
+```
+
+The runner writes [`evals/results.json`](evals/results.json) and [`evals/results.md`](evals/results.md) (`--out-dir` to change) and exits non-zero if a gate fails. It needs no network: provider keys are blanked before the app is imported, the Gemini adapter only sees API-shaped responses from a stub client, and the live segmentation run stops if the weights are not already cached. The fixtures are 20 scenes (960x640) drawn in code with the functions in `scripts/make_samples.py`, so the vehicle mask, plate box and watermark box are known exactly. The edit metric (`evals/metrics.py`) counts a pixel as changed when an RGB channel moves by more than 8/255, ignores a 3 px margin around the mask, and passes an edit when at most 1% of the outside pixels changed, the PSNR outside is at least 35 dB, and at least 5% of the masked pixels changed. These thresholds are design choices, not calibrated on real model outputs.
+
+Measured with `--bg-model u2net` on the Apple M2 Max from [Results](#results) (macOS 26.7.2, load average about 15, so the timing is an upper bound), in the local venv (Python 3.11.13, Pillow 11.1.0, rembg 2.0.61, ONNX Runtime 1.31.1, google-genai 2.34.0; older than some pins in `requirements.txt`). 28/28 gates passed. Ranges are min to max over the 20 scenes:
+
+| Check | Measured | Gate |
+|---|---|---|
+| Good edit: inpaint only the plate and watermark boxes | 0% of outside pixels changed; 20/20 pass | must pass |
+| Bleeding edit: the same boxes grown by 24 px | 1.1–3.5% changed outside, 9–30% in the 32 px ring round the mask, PSNR outside 20.8–32.9 dB; 20/20 flagged | must fail |
+| Global colour shift after a good edit | 99.7–100% changed outside, 29.4 dB; 20/20 flagged | must fail |
+| Output identical to the input | 0% changed inside the mask; 20/20 flagged as no edit | must be flagged |
+| Good edit returned at 16:9 | 20/20 flagged as size mismatch | must be flagged |
+| Good edit, then a whole-frame JPEG q92 re-encode | 0.7–2.6% changed outside, 39.3–43.0 dB; 11/20 flagged | informational |
+| Gemini adapter on a recorded-shape success / blocked response | pixels returned unchanged, HTTP 200 / `ImageEditError`, HTTP 502 | must pass |
+| Scoring harness with stub models: oracle / mask shifted 40 px / empty | mean IoU 0.974 / 0.695 / 0 (the oracle scores 0.974, not 1, because of the 1 px erode in `refine_mask`) | ordering must hold |
+| **u2net** background removal, 20 scenes | **mean IoU 0.812** (0.456–0.991): cars 0.987, motorcycles 0.637; 0.41 s per image | reported, not gated |
+| Input guards: non-image, GIF, BMP, TIFF, pixel bomb, >25 MB upload, upscale over the output limit, bad scale, junk before a paid call, long prompt, unknown preset, no key | 13/13 expected status codes; the upscaler and the paid provider were never called for a refused request | must pass |
+
+What the evals found:
+
+- **Fixed:** the Gemini adapter failed on every successful response. In google-genai, `Part.as_image()` returns the SDK's own `types.Image`, whose `save()` takes a file path, so the PNG re-encode raised `TypeError` (an HTTP 500). A blocked response (no `parts`) failed the same way instead of returning a clean 502. `gemini_editor.py` now reads `inline_data.data` directly; both cases have regression tests.
+- **Fixed:** the Gemini adapter asked for 16:9 output for 3:2 inputs (the bundled 1200x800 samples) and for square inputs, and 3:4 for 2:3, so the result came back a different shape. Both providers now ask for the supported ratio closest to the photo on a log scale (portrait and landscape treated alike) and honour the EXIF orientation tag, so a sideways-stored phone photo is sent upright. OpenAI picks the nearest of its three sizes.
+- u2net cuts out the car scenes well (IoU 0.974–0.991 on all 10) and does much worse on the motorcycles (0.456–0.692). On the worst one it kept background buildings and dropped the grey engine, in line with the holes visible in the demo above.
+- The 1% gate also flags about half of the whole-frame JPEG re-encodes. That strictness suits a lossless pipeline; generative models redraw the whole frame, so the thresholds would need calibrating on real outputs.
+
+Not covered: live Gemini inpainting quality (needs a calibrated vision judge and API access), and the same for OpenAI. The "recorded" Gemini responses are API-shaped JSON around a synthetic image: they test the adapter's parsing and that it passes pixels through, not the model. The repo has no deterministic plate or watermark detector (the model decides where to edit), so detection is not evaluated; the masks come from the fixture geometry. BiRefNet and RMBG-2.0 were not run, Real-ESRGAN output quality is not scored, and the scenes are drawings, not photographs.
 
 ## Results
 
@@ -253,6 +286,7 @@ frontend/src/
   lib/api.ts               API client
 samples/                   synthetic test images (scripts/make_samples.py)
 scripts/make_readme_images.py
+evals/                     run_evals.py, metrics.py, fixtures.py, results.json/.md
 ```
 
 ## Limitations and roadmap

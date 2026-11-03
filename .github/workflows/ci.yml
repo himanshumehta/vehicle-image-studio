@@ -50,6 +50,12 @@ jobs:
         env:
           SEED_SAMPLES: "false"
       - run: pytest -q
+      # Offline evals: stub segmentation model, no weights, no API keys. Gated checks fail the job.
+      - name: Evals (deterministic)
+        run: |
+          python ../evals/run_evals.py --out-dir "$RUNNER_TEMP/evals" || status=$?
+          cat "$RUNNER_TEMP/evals/results.md" >> "$GITHUB_STEP_SUMMARY"
+          exit "${status:-0}"
 
   security:
     runs-on: ubuntu-latest
@@ -74,7 +80,7 @@ jobs:
         working-directory: frontend
         run: npm audit --omit=dev --audit-level=high
       - name: Bandit (Python SAST)
-        run: bandit -q -r backend scripts -x backend/tests
+        run: bandit -q -r backend scripts evals -x backend/tests
       - name: Gitleaks (full history)
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:

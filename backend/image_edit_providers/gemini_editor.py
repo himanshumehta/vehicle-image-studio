@@ -2,18 +2,24 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from io import BytesIO
 from typing import Optional
 from PIL import Image
 
 from .base import (
+    GEMINI_ASPECT_RATIOS,
     REQUEST_TIMEOUT_S,
     VEHICLE_PHOTO_CONTEXT,
     ImageEditError,
     ImageEditProvider,
     ImageEditResult,
+    nearest_ratio,
     provider_failure,
+    upright,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiImageEditor(ImageEditProvider):
@@ -48,17 +54,10 @@ class GeminiImageEditor(ImageEditProvider):
         from google.genai import types
 
         client = self._get_client()
-        source_img = Image.open(BytesIO(image_bytes))
-
-        w, h = source_img.size
-        if abs(w / h - 16 / 9) < 0.1:
-            aspect = "16:9"
-        elif abs(w / h - 4 / 3) < 0.1:
-            aspect = "4:3"
-        elif abs(w / h - 3 / 4) < 0.1:
-            aspect = "3:4"
-        else:
-            aspect = "16:9"
+        # Send the photo the way the user sees it (phone JPEGs are often stored sideways
+        # with an EXIF orientation tag) and ask for the closest supported aspect ratio.
+        source_img = upright(Image.open(BytesIO(image_bytes)))
+        aspect = nearest_ratio(*source_img.size, GEMINI_ASPECT_RATIOS)
 
         context = system_context or VEHICLE_PHOTO_CONTEXT
         full_prompt = f"{context}\n\nUser request: {prompt}"
@@ -76,16 +75,23 @@ class GeminiImageEditor(ImageEditProvider):
         except Exception as e:
             raise provider_failure("gemini", e, ("quota", "rate", "429", "timeout", "timed out")) from e
 
+        # A blocked or empty response has no parts at all; the finish reason goes to the log only.
+        parts = response.parts or []
         edited_bytes = None
-        for part in response.parts:
-            if part.inline_data is not None:
-                edited_img = part.as_image()
+        for part in parts:
+            if part.inline_data is not None and part.inline_data.data:
+                # Re-encode the returned bytes as PNG. part.as_image() is not used: in the
+                # SDK it returns google.genai.types.Image, which has no PIL-style save().
+                edited_img = Image.open(BytesIO(part.inline_data.data))
                 buf = BytesIO()
                 edited_img.save(buf, format="PNG")
                 edited_bytes = buf.getvalue()
                 break
 
         if not edited_bytes:
+            candidates = response.candidates or []
+            finish = candidates[0].finish_reason if candidates else None
+            logger.warning("gemini returned no image (finish_reason=%s)", finish)
             raise ImageEditError(
                 "Gemini returned no image in response",
                 provider="gemini",
